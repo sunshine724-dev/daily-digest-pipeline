@@ -84,9 +84,9 @@ def _get_credentials() -> Credentials | None:
     return creds
 
 
-def collect() -> list[CalendarEventInfo]:
+def collect(target_date_str: str) -> list[CalendarEventInfo]:
     """
-    今日のGoogleカレンダーイベントを取得する。
+    指定日のGoogleカレンダーイベントを取得する。
 
     Returns:
         CalendarEventInfoのリスト（開始時刻順）
@@ -99,17 +99,17 @@ def collect() -> list[CalendarEventInfo]:
     try:
         service = build("calendar", "v3", credentials=creds)
 
-        # 今日の開始・終了時刻（JST）
+        # 対象日の開始・終了時刻（JST）
         jst = timezone(timedelta(hours=9))
-        now = datetime.now(jst)
-        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        today_end = today_start + timedelta(days=1)
+        dt = datetime.strptime(target_date_str, "%Y-%m-%d").replace(tzinfo=jst)
+        target_start = dt
+        target_end = target_start + timedelta(days=1)
 
         # イベント取得
         events_result = service.events().list(
             calendarId="primary",
-            timeMin=today_start.isoformat(),
-            timeMax=today_end.isoformat(),
+            timeMin=target_start.isoformat(),
+            timeMax=target_end.isoformat(),
             singleEvents=True,
             orderBy="startTime",
         ).execute()

@@ -7,7 +7,7 @@ import logging
 import shutil
 import sqlite3
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import TypedDict
 
@@ -27,9 +27,9 @@ class ChromeSiteInfo(TypedDict):
     visit_count: int
 
 
-def collect() -> list[ChromeSiteInfo]:
+def collect(target_date_str: str) -> list[ChromeSiteInfo]:
     """
-    今日のChromeブラウザ履歴を取得する。
+    指定日時のChromeブラウザ履歴を取得する。
 
     ChromeがDBをロックしている可能性があるため、
     一時ファイルにコピーしてから読み込む。
@@ -57,22 +57,23 @@ def collect() -> list[ChromeSiteInfo]:
         conn = sqlite3.connect(str(tmp_path))
         cursor = conn.cursor()
 
-        # 今日の開始時刻をChrome epochに変換
-        now = datetime.now(timezone.utc)
-        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        today_start_chrome = int(today_start.timestamp() * 1_000_000) + _CHROME_EPOCH_OFFSET
+        # 対象日の開始時刻と終了時刻をChrome epochに変換
+        # UTCとして扱い、その日の0時0分を設定
+        dt = datetime.strptime(target_date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        target_start_chrome = int(dt.timestamp() * 1_000_000) + _CHROME_EPOCH_OFFSET
+        target_end_chrome = int((dt + timedelta(days=1)).timestamp() * 1_000_000) + _CHROME_EPOCH_OFFSET
 
-        # 今日訪問したURLを訪問回数付きで取得
+        # 該当日に訪問したURLを訪問回数付きで取得
         query = """
             SELECT u.url, u.title, COUNT(v.id) as visit_count
             FROM urls u
             JOIN visits v ON u.id = v.url
-            WHERE v.visit_time >= ?
+            WHERE v.visit_time >= ? AND v.visit_time < ?
             GROUP BY u.url
             ORDER BY visit_count DESC
             LIMIT ?
         """
-        cursor.execute(query, (today_start_chrome, config.MAX_CHROME_SITES))
+        cursor.execute(query, (target_start_chrome, target_end_chrome, config.MAX_CHROME_SITES))
 
         results: list[ChromeSiteInfo] = []
         for url, title, visit_count in cursor.fetchall():

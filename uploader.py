@@ -6,6 +6,7 @@
 import logging
 import time
 from typing import Any
+import requests
 
 from notion_client import Client, APIResponseError
 
@@ -244,75 +245,105 @@ def _table_block(table_lines: list[str]) -> dict[str, Any]:
     }
 
 
-def _delete_all_blocks(notion: Client, page_id: str) -> None:
-    """ページ内の全ブロックを削除する。"""
-    children = notion.blocks.children.list(block_id=page_id)
-
-    for block in children.get("results", []):
-        block_id = block["id"]
-        try:
-            notion.blocks.delete(block_id=block_id)
-        except APIResponseError as e:
-            logger.warning(f"ブロック削除失敗（{block_id}）: {e}")
-
-    # ページネーション対応
-    while children.get("has_more"):
-        children = notion.blocks.children.list(
-            block_id=page_id,
-            start_cursor=children["next_cursor"],
-        )
-        for block in children.get("results", []):
-            block_id = block["id"]
-            try:
-                notion.blocks.delete(block_id=block_id)
-            except APIResponseError as e:
-                logger.warning(f"ブロック削除失敗（{block_id}）: {e}")
-
-
-def upload(markdown: str, dry_run: bool = False) -> bool:
+def get_latest_processed_date() -> str | None:
     """
-    MCPログページを全文置換で更新する。
+    Notionのデータベースから一番最後に作成されたログの日付を取得する。
+    """
+    if not config.NOTION_API_TOKEN or not config.MCP_LOG_DB_ID:
+        logger.warning("NOTION_API_TOKEN または MCP_LOG_DB_ID が設定されていません。")
+        return None
+
+    try:
+        headers = {
+            "Authorization": f"Bearer {config.NOTION_API_TOKEN}",
+            "Notion-Version": "2022-06-28",
+            "Content-Type": "application/json"
+        }
+        url = f"https://api.notion.com/v1/databases/{config.MCP_LOG_DB_ID}/query"
+        payload = {
+            "sorts": [{"property": "Date", "direction": "descending"}],
+            "page_size": 1
+        }
+        
+        resp = requests.post(url, headers=headers, json=payload, timeout=10)
+        resp.raise_for_status()
+        
+        results = resp.json().get("results", [])
+        if not results:
+            return None
+            
+        latest_page = results[0]
+        properties = latest_page.get("properties", {})
+        date_prop = properties.get("Date", {})
+        
+        if date_prop.get("type") == "date" and date_prop.get("date"):
+            return date_prop["date"].get("start")
+            
+        return None
+        
+    except Exception as e:
+        logger.error(f"Notion DBからの最新日付取得に失敗しました: {e}")
+        return None
+
+def upload(markdown: str, target_date: str, dry_run: bool = False) -> bool:
+    """
+    MCPログをNotionデータベースの新規ページとして作成する。
 
     Args:
         markdown: MCPログ形式のMarkdown文字列
+        target_date: 対象日の文字列（例: '2026-04-10'）
         dry_run: Trueの場合、Notion更新を行わずMarkdownを標準出力に表示
 
     Returns:
         成功した場合True
     """
     if dry_run:
-        logger.info("=== DRY RUN モード ===")
+        logger.info(f"=== DRY RUN モード: {target_date} ===")
         print(markdown)
         return True
 
-    if not config.NOTION_API_TOKEN:
-        logger.error("NOTION_API_TOKEN が設定されていません。")
+    if not config.NOTION_API_TOKEN or not config.MCP_LOG_DB_ID:
+        logger.error("NOTION_API_TOKEN または MCP_LOG_DB_ID が設定されていません。")
         return False
 
-    page_id = config.MCP_LOG_PAGE_ID
+    db_id = config.MCP_LOG_DB_ID
 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             notion = Client(auth=config.NOTION_API_TOKEN)
 
-            # 1. 既存ブロックを全削除
-            logger.info("既存ブロックを削除中...")
-            _delete_all_blocks(notion, page_id)
-
-            # 2. Markdownをブロックに変換
+            # 1. Markdownをブロックに変換
             blocks = _markdown_to_notion_blocks(markdown)
-            logger.info(f"{len(blocks)}個のブロックを作成中...")
+            logger.info(f"{len(blocks)}個のブロックを新規作成中... ({target_date})")
 
-            # 3. Notion APIは1回に最大100ブロックまで
-            chunk_size = 100
-            for start in range(0, len(blocks), chunk_size):
-                chunk = blocks[start:start + chunk_size]
-                notion.blocks.children.append(
-                    block_id=page_id,
-                    children=chunk,
-                )
+            # 2. Notion APIでページを新規作成
+            # 1回のリクエストで最大100ブロックまで送信可能
+            initial_blocks = blocks[:100]
+            remaining_blocks = blocks[100:]
 
-            logger.info("MCPログページの更新が完了しました。")
+            new_page = notion.pages.create(
+                parent={"database_id": db_id},
+                properties={
+                    "Title": {"title": [{"text": {"content": f"Daily Digest {target_date}"}}]},
+                    "Date": {"date": {"start": target_date}},
+                    "AI Summary Generated": {"checkbox": False}
+                },
+                children=initial_blocks
+            )
+            
+            page_id = new_page["id"]
+
+            # 3. 100ブロックを超える場合は追加書き込み
+            if remaining_blocks:
+                chunk_size = 100
+                for start in range(0, len(remaining_blocks), chunk_size):
+                    chunk = remaining_blocks[start:start + chunk_size]
+                    notion.blocks.children.append(
+                        block_id=page_id,
+                        children=chunk,
+                    )
+
+            logger.info(f"Notionデータベースへの新規追加が完了しました（{target_date}）")
             return True
 
         except APIResponseError as e:

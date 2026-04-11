@@ -80,6 +80,7 @@ def format_digest(
     chrome_sites: list[ChromeSiteInfo],
     app_times: list[AppTimeEntry],
     calendar_events: list[CalendarEventInfo] | None = None,
+    target_date_str: str = ""
 ) -> str:
     """
     収集データからMCPログ形式のMarkdownを生成する。
@@ -94,12 +95,12 @@ def format_digest(
         MCPログ用のMarkdown文字列
     """
     now = datetime.now(_JST)
-    date_str = now.strftime("%Y-%m-%d")
+    display_date = target_date_str if target_date_str else now.strftime("%Y-%m-%d")
 
     lines: list[str] = []
 
     # === ヘッダー ===
-    lines.append(f"## 📋 Daily Digest — {date_str}")
+    lines.append(f"## 📋 Daily Digest — {display_date}")
     lines.append("")
 
     # === ハイライト ===

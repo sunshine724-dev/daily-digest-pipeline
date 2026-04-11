@@ -14,6 +14,7 @@ load_dotenv(Path(__file__).parent / ".env")
 # === Notion API ===
 NOTION_API_TOKEN: str = os.getenv("NOTION_API_TOKEN", "")
 MCP_LOG_PAGE_ID: str = os.getenv("MCP_LOG_PAGE_ID", "8a6ce048c8e54b5db4c149a5ff5bb178")
+MCP_LOG_DB_ID: str = os.getenv("MCP_LOG_DB_ID", "")
 
 # === GitHub API ===
 GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN", "")

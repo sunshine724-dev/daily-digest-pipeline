@@ -22,9 +22,9 @@ class GitHubRepoActivity(TypedDict):
     repo_url: str
 
 
-def collect() -> list[GitHubRepoActivity]:
+def collect(target_date_str: str) -> list[GitHubRepoActivity]:
     """
-    今日のGitHubアクティビティ（コミット）を取得する。
+    指定日のGitHubアクティビティ（コミット）を取得する。
 
     Returns:
         GitHubRepoActivityのリスト
@@ -40,20 +40,27 @@ def collect() -> list[GitHubRepoActivity]:
     try:
         g = Github(config.GITHUB_TOKEN)
 
-        # 今日の開始時刻（UTC）
-        now = datetime.now(timezone.utc)
-        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        # 対象日の開始・終了時刻（UTC）
+        dt = datetime.strptime(target_date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        target_start = dt
+        target_end = dt + timedelta(days=1)
 
-        # ユーザーのイベントから今日のPushイベントを取得
+        # ユーザーのイベントから対象日のPushイベントを取得
         user = g.get_user(config.GITHUB_USERNAME)
         events = user.get_events()
 
         repo_activities: dict[str, GitHubRepoActivity] = {}
 
         for event in events:
-            # イベントの日時チェック（今日より前なら終了）
-            if event.created_at.replace(tzinfo=timezone.utc) < today_start:
+            event_dt = event.created_at.replace(tzinfo=timezone.utc)
+            
+            # イベントの日時チェック（対象日より前なら終了：ソート済み前提）
+            if event_dt < target_start:
                 break
+                
+            # 対象日より未来の場合は無視して次へ
+            if event_dt >= target_end:
+                continue
 
             if event.type == "PushEvent":
                 repo_name = event.repo.name

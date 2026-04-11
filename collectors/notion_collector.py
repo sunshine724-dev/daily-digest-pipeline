@@ -21,9 +21,12 @@ class NotionPageInfo(TypedDict):
     last_edited: str
 
 
-def collect() -> list[NotionPageInfo]:
+def collect(target_date_str: str) -> list[NotionPageInfo]:
     """
-    今日編集されたNotionページを取得する。
+    指定された日付に編集されたNotionページを取得する。
+    
+    Args:
+        target_date_str: YYYY-MM-DD形式の日付文字列
 
     Returns:
         NotionPageInfoのリスト
@@ -34,7 +37,6 @@ def collect() -> list[NotionPageInfo]:
 
     try:
         notion = Client(auth=config.NOTION_API_TOKEN)
-        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
         results: list[NotionPageInfo] = []
         has_more = True
@@ -51,11 +53,18 @@ def collect() -> list[NotionPageInfo]:
             for page in response.get("results", []):
                 last_edited = page.get("last_edited_time", "")
 
-                # 今日の日付でフィルタ
-                if not last_edited.startswith(today_str):
-                    # ソート済みなので、今日以外が出たら終了
-                    has_more = False
-                    break
+                # 指定された日付でフィルタ
+                if not last_edited.startswith(target_date_str):
+                    # ソート済みであっても、指定日「以後」のものが混ざる可能性があるので、
+                    # 前の日付が出た時点で打ち切るように処理する。
+                    # ここでは一旦、違う日付が出たら対象外とする。
+                    # ※ NotionのAPIレスポンスの順番に注意。ここでは降順（新しい順）。
+                    # なので、指定日付より古いものが出たら終了する判定にするのが正確だが、
+                    # 単純前方一致で指定日付のみ抽出するようにしておく。
+                    if last_edited < target_date_str:
+                        has_more = False
+                        break
+                    continue
 
                 # タイトルを取得
                 title = _extract_title(page)

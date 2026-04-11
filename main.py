@@ -38,7 +38,7 @@ def setup_logging() -> None:
     )
 
 
-def collect_all() -> dict:
+def collect_all(target_date_str: str) -> dict:
     """
     全収集モジュールを並列実行して結果を返す。
     各モジュールのエラーは個別にハンドリングされ、
@@ -58,11 +58,11 @@ def collect_all() -> dict:
 
     # 収集タスクの定義
     tasks = {
-        "notion": ("notion_pages", notion_collector.collect),
-        "github": ("github_repos", github_collector.collect),
-        "chrome": ("chrome_sites", chrome_collector.collect),
-        "activitywatch": ("app_times", activitywatch_collector.collect),
-        "gcal": ("calendar_events", gcal_collector.collect),
+        "notion": ("notion_pages", lambda: notion_collector.collect(target_date_str)),
+        "github": ("github_repos", lambda: github_collector.collect(target_date_str)),
+        "chrome": ("chrome_sites", lambda: chrome_collector.collect(target_date_str)),
+        "activitywatch": ("app_times", lambda: activitywatch_collector.collect(target_date_str)),
+        "gcal": ("calendar_events", lambda: gcal_collector.collect(target_date_str)),
     }
 
     with ThreadPoolExecutor(max_workers=5) as executor:
@@ -99,34 +99,72 @@ def main() -> None:
     logger = logging.getLogger(__name__)
 
     now = datetime.now(_JST)
+    today_str = now.strftime('%Y-%m-%d')
     logger.info(f"=== Daily Digest Pipeline 開始 ({now.strftime('%Y-%m-%d %H:%M:%S')} JST) ===")
 
-    # 1. データ収集
-    logger.info("📥 データ収集を開始...")
-    data = collect_all()
-
-    # 2. フォーマット
-    logger.info("📝 Markdownを生成中...")
-    markdown = formatter.format_digest(
-        notion_pages=data["notion_pages"],
-        github_repos=data["github_repos"],
-        chrome_sites=data["chrome_sites"],
-        app_times=data["app_times"],
-        calendar_events=data["calendar_events"],
-    )
-
-    # 3. アップロード
+    # 対象日のリストを作成
+    target_dates = []
     if args.dry_run:
-        logger.info("🔍 DRY RUN モード — Notion更新はスキップします")
+        # Dry-run時は今日のみ
+        target_dates = [today_str]
     else:
-        logger.info("📤 MCPログページを更新中...")
+        last_date_str = uploader.get_latest_processed_date()
+        if last_date_str:
+            last_date = datetime.strptime(last_date_str, "%Y-%m-%d").date()
+            today_date = now.date()
+            
+            # 翌日から今日までのリストを作成
+            curr_date = last_date + timedelta(days=1)
+            while curr_date <= today_date:
+                target_dates.append(curr_date.strftime("%Y-%m-%d"))
+                curr_date += timedelta(days=1)
+            
+            # すでに今日まで最新化されていれば何もせず終了する場合も考慮
+            if not target_dates:
+                 logger.info("最新のログがすでに作成されています。実行をスキップします。")
+                 sys.exit(0)
+        else:
+            # Not found or first run
+            target_dates = [today_str]
+            logger.info(f"過去の履歴が見つからないため、今日({today_str})のみを実行します。")
 
-    success = uploader.upload(markdown, dry_run=args.dry_run)
+    logger.info(f"対象となる日付: {target_dates}")
 
-    if success:
+    all_success = True
+    for target_date_str in target_dates:
+        logger.info(f"--- 📅 {target_date_str} の処理を開始 ---")
+        
+        # 1. データ収集
+        logger.info(f"📥 データ収集を開始 ({target_date_str})...")
+        data = collect_all(target_date_str)
+
+        # 2. フォーマット
+        logger.info("📝 Markdownを生成中...")
+        markdown = formatter.format_digest(
+            notion_pages=data["notion_pages"],
+            github_repos=data["github_repos"],
+            chrome_sites=data["chrome_sites"],
+            app_times=data["app_times"],
+            calendar_events=data["calendar_events"],
+            target_date_str=target_date_str
+        )
+
+        # 3. アップロード
+        if args.dry_run:
+            logger.info("🔍 DRY RUN モード — Notion更新はスキップします")
+            success = uploader.upload(markdown, target_date=target_date_str, dry_run=True)
+        else:
+            logger.info(f"📤 MCPログデータベースを更新中... ({target_date_str})")
+            success = uploader.upload(markdown, target_date=target_date_str, dry_run=False)
+
+        if not success:
+            logger.error(f"❌ {target_date_str} の記録に失敗しました。")
+            all_success = False
+
+    if all_success:
         logger.info("✅ Daily Digest Pipeline 完了")
     else:
-        logger.error("❌ MCPログページの更新に失敗しました")
+        logger.error("❌ 一部またはすべての更新に失敗しました")
         sys.exit(1)
 
 

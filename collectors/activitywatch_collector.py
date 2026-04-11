@@ -20,9 +20,12 @@ class AppTimeEntry(TypedDict):
     duration_seconds: float
 
 
-def collect() -> list[AppTimeEntry]:
+def collect(target_date_str: str) -> list[AppTimeEntry]:
     """
-    ActivityWatchから今日のアプリ別時間配分を取得する。
+    ActivityWatchから指定日のアプリ別時間配分を取得する。
+    
+    Args:
+        target_date_str: YYYY-MM-DD形式の日付文字列
 
     Returns:
         AppTimeEntryのリスト（使用時間の長い順）
@@ -47,15 +50,16 @@ def collect() -> list[AppTimeEntry]:
             logger.warning("aw-watcher-window バケットが見つかりません。")
             return []
 
-        # 今日の開始・終了時刻
-        now = datetime.now(timezone.utc)
-        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        tomorrow_start = today_start + timedelta(days=1)
+        # 対象日の開始・終了時刻
+        # target_date_str は "YYYY-MM-DD" なのでパースする
+        dt = datetime.strptime(target_date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        target_start = dt
+        tomorrow_start = target_start + timedelta(days=1)
 
-        # 今日のイベントを取得
+        # イベントを取得
         events_url = f"{base_url}/api/0/buckets/{window_bucket_id}/events"
         params = {
-            "start": today_start.isoformat(),
+            "start": target_start.isoformat(),
             "end": tomorrow_start.isoformat(),
         }
         resp = requests.get(events_url, params=params, timeout=10)
