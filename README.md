@@ -19,6 +19,7 @@
 | **Chrome**        | 指定日の閲覧履歴（訪問回数順）        |
 | **ActivityWatch** | アプリ別の使用時間                  |
 | **Google Calendar** | 指定日の予定一覧                  |
+| **WhatPulse**     | キー入力数・クリック数・スクロール数・ネットワーク使用量・稼働時間 |
 
 ## Notionデータベース構成
 
@@ -53,6 +54,7 @@ Copy-Item .env.example .env
 # - MCP_LOG_DB_ID      ← NotionデータベースのID（URLから取得）
 # - GITHUB_TOKEN
 # - GITHUB_USERNAME
+# - WHATPULSE_API_BASE  ← デフォルト: http://localhost:3490（通常は変更不要）
 ```
 
 ### 3. Notionデータベースの準備
@@ -102,7 +104,8 @@ daily-digest-pipeline/
 │   ├── github_collector.py
 │   ├── chrome_collector.py
 │   ├── activitywatch_collector.py
-│   └── gcal_collector.py
+│   ├── gcal_collector.py
+│   └── whatpulse_collector.py
 ├── tests/
 │   ├── test_collectors.py
 │   └── test_formatter.py
@@ -117,4 +120,6 @@ daily-digest-pipeline/
 - 各収集モジュールは **独立して動作** します。特定のサービスが利用できなくても、他のデータは正常に収集されます（graceful degradation）
 - Chrome履歴はブラウザが使用中でも読み取り可能（一時コピーを使用）
 - ActivityWatchが起動していない場合は自動的にスキップされます
+- **WhatPulse** はClient APIを有効にする必要があります（クライアント設定 → Client API → 有効化、デフォルトポート `3490`）。起動していない場合は自動的にスキップされます
+- WhatPulseは `/v1/unpulsed`（最後のパルス以降の統計）を取得します。正確な日次データを得るには、パイプライン実行後にパルスすることを推奨します
 - **未実行日の補完**は、Notionデータベース上の最新の `Date` から今日までの差分を自動計算して行われます。ローカルにSQLite等の状態管理ファイルは不要です

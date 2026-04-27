@@ -13,11 +13,12 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone, timedelta
 
-from collectors import notion_collector, github_collector, chrome_collector, activitywatch_collector, gcal_collector
+from collectors import notion_collector, github_collector, chrome_collector, activitywatch_collector, gcal_collector, whatpulse_collector
 from collectors.notion_collector import NotionPageInfo
 from collectors.github_collector import GitHubRepoActivity
 from collectors.chrome_collector import ChromeSiteInfo
 from collectors.activitywatch_collector import AppTimeEntry
+from collectors.whatpulse_collector import WhatPulseStats
 import formatter
 import uploader
 
@@ -54,6 +55,7 @@ def collect_all(target_date_str: str) -> dict:
         "chrome_sites": [],
         "app_times": [],
         "calendar_events": [],
+        "whatpulse_stats": None,
     }
 
     # 収集タスクの定義
@@ -63,9 +65,10 @@ def collect_all(target_date_str: str) -> dict:
         "chrome": ("chrome_sites", lambda: chrome_collector.collect(target_date_str)),
         "activitywatch": ("app_times", lambda: activitywatch_collector.collect(target_date_str)),
         "gcal": ("calendar_events", lambda: gcal_collector.collect(target_date_str)),
+        "whatpulse": ("whatpulse_stats", lambda: whatpulse_collector.collect(target_date_str)),
     }
 
-    with ThreadPoolExecutor(max_workers=5) as executor:
+    with ThreadPoolExecutor(max_workers=6) as executor:
         future_to_name = {}
         for name, (key, func) in tasks.items():
             future = executor.submit(func)
@@ -76,7 +79,13 @@ def collect_all(target_date_str: str) -> dict:
             try:
                 result = future.result()
                 results[key] = result
-                logger.info(f"✅ {name} 収集完了: {len(result)}件")
+                # WhatPulseはリストではなく辞書またはNoneを返す
+                if isinstance(result, dict):
+                    logger.info(f"✅ {name} 収集完了")
+                elif result is None:
+                    logger.info(f"⚠️ {name} データなし")
+                else:
+                    logger.info(f"✅ {name} 収集完了: {len(result)}件")
             except Exception as e:
                 logger.error(f"❌ {name} 収集失敗: {e}")
 
@@ -146,6 +155,7 @@ def main() -> None:
             chrome_sites=data["chrome_sites"],
             app_times=data["app_times"],
             calendar_events=data["calendar_events"],
+            whatpulse_stats=data["whatpulse_stats"],
             target_date_str=target_date_str
         )
 

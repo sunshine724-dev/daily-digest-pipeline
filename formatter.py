@@ -12,6 +12,7 @@ from collectors.github_collector import GitHubRepoActivity
 from collectors.chrome_collector import ChromeSiteInfo
 from collectors.activitywatch_collector import AppTimeEntry
 from collectors.gcal_collector import CalendarEventInfo
+from collectors.whatpulse_collector import WhatPulseStats
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,7 @@ def generate_highlights(
     chrome_sites: list[ChromeSiteInfo],
     app_times: list[AppTimeEntry],
     calendar_events: list[CalendarEventInfo] | None = None,
+    whatpulse_stats: WhatPulseStats | None = None,
 ) -> list[str]:
     """
     各データソースからハイライト項目（最大5つ）を自動生成する。
@@ -71,6 +73,12 @@ def generate_highlights(
         top_site = chrome_sites[0]
         highlights.append(f"{top_site['title']} を最も閲覧（{top_site['visit_count']}回）")
 
+    # WhatPulseからハイライト生成
+    if whatpulse_stats:
+        keys = whatpulse_stats['keys']
+        clicks = whatpulse_stats['clicks']
+        highlights.append(f"キー入力: {keys:,}回 / クリック: {clicks:,}回")
+
     return highlights[:config.MAX_HIGHLIGHTS]
 
 
@@ -80,6 +88,7 @@ def format_digest(
     chrome_sites: list[ChromeSiteInfo],
     app_times: list[AppTimeEntry],
     calendar_events: list[CalendarEventInfo] | None = None,
+    whatpulse_stats: WhatPulseStats | None = None,
     target_date_str: str = ""
 ) -> str:
     """
@@ -104,7 +113,7 @@ def format_digest(
     lines.append("")
 
     # === ハイライト ===
-    highlights = generate_highlights(notion_pages, github_repos, chrome_sites, app_times, calendar_events)
+    highlights = generate_highlights(notion_pages, github_repos, chrome_sites, app_times, calendar_events, whatpulse_stats)
     if highlights:
         lines.append("### 🔖 Highlights")
         for i, h in enumerate(highlights, 1):
@@ -161,6 +170,20 @@ def format_digest(
             lines.append(f"{i}. {site['title']} ({site['visit_count']} visits)")
         lines.append("")
 
+    # === WhatPulse入力・ネットワーク ===
+    if whatpulse_stats:
+        lines.append("### ⌨️ Input & Network (WhatPulse)")
+        lines.append("| 項目 | 値 |")
+        lines.append("|------|-----|")
+        lines.append(f"| キー入力 | {whatpulse_stats['keys']:,} 回 |")
+        lines.append(f"| クリック | {whatpulse_stats['clicks']:,} 回 |")
+        lines.append(f"| スクロール | {whatpulse_stats['scrolls']:,} 回 |")
+        lines.append(f"| ダウンロード | {whatpulse_stats['download_mb']:.1f} MB |")
+        lines.append(f"| アップロード | {whatpulse_stats['upload_mb']:.1f} MB |")
+        uptime_h = whatpulse_stats['uptime_seconds'] // 3600
+        uptime_m = (whatpulse_stats['uptime_seconds'] % 3600) // 60
+        lines.append(f"| 稼働時間 | {uptime_h}h {uptime_m:02d}m |")
+        lines.append("")
     # === フッター ===
     lines.append("---")
     lines.append(f"*自動生成: {now.strftime('%Y-%m-%d %H:%M:%S')} JST*")

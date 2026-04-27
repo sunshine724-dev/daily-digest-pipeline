@@ -32,6 +32,9 @@ CHROME_HISTORY_PATH: Path = (
     / "Google" / "Chrome" / "User Data" / CHROME_PROFILE / "History"
 )
 
+# === WhatPulse ===
+WHATPULSE_API_BASE: str = os.getenv("WHATPULSE_API_BASE", "http://localhost:3490")
+
 # === 出力設定 ===
 MAX_HIGHLIGHTS: int = 5
 MAX_CHROME_SITES: int = 10
