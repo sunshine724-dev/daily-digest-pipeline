@@ -44,4 +44,4 @@ MAX_GITHUB_REPOS: int = 10
 # === 日付調整 ===
 # 実行日から何日ずらした日付を対象にするか。
 # 例: -1 なら昨日、0 なら当日、1 なら翌日を対象にする。
-TARGET_DATE_OFFSET_DAYS: int = int(os.getenv("TARGET_DATE_OFFSET_DAYS", "0"))
+TARGET_DATE_OFFSET_DAYS: int = int(os.getenv("TARGET_DATE_OFFSET_DAYS", "-1"))

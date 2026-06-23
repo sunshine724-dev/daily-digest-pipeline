@@ -1,5 +1,5 @@
 # Daily Digest Pipeline Scheduler Setup
-# Register a daily task at 22:55 in Windows Task Scheduler
+# Register a daily task at 00:05 in Windows Task Scheduler
 
 param(
     [string]$PythonPath = "",
@@ -44,8 +44,8 @@ $Action = New-ScheduledTaskAction `
     -Argument "`"$MainScript`"" `
     -WorkingDirectory $ProjectDir
 
-# Trigger: daily at 22:55
-$Trigger = New-ScheduledTaskTrigger -Daily -At "22:55"
+# Trigger: daily at 00:05
+$Trigger = New-ScheduledTaskTrigger -Daily -At "00:05"
 
 # Settings
 $Settings = New-ScheduledTaskSettingsSet `
@@ -67,11 +67,11 @@ Register-ScheduledTask `
     -Action $Action `
     -Trigger $Trigger `
     -Settings $Settings `
-    -Description "Daily Digest Pipeline - Update MCP Log at 22:55" `
+    -Description "Daily Digest Pipeline - Update MCP Log at 00:05" `
     -RunLevel Limited
 
 Write-Host ""
-Write-Host "Task '$TaskName' registered (daily at 22:55)" -ForegroundColor Green
+Write-Host "Task '$TaskName' registered (daily at 00:05)" -ForegroundColor Green
 Write-Host ""
 Write-Host "Check:  Get-ScheduledTask -TaskName $TaskName" -ForegroundColor Gray
 Write-Host "Run:    Start-ScheduledTask -TaskName $TaskName" -ForegroundColor Gray

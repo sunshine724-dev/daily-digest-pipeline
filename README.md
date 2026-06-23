@@ -4,7 +4,7 @@
 
 ## 概要
 
-- **22:55** に自動実行し、その日の作業データを収集
+- **00:05** に自動実行し、前日の作業データを収集
 - 固定フォーマットのMarkdownを生成
 - Notion APIで**データベースに新規ページを作成**（日別に1ページ）
 - **未実行日の自動補完**: PCが起動していなかった等の理由でパイプラインが実行されなかった日がある場合、次回実行時にNotionデータベースの最新記録日を参照し、不足分を自動で遡って補完します
@@ -55,7 +55,7 @@ Copy-Item .env.example .env
 # - GITHUB_TOKEN
 # - GITHUB_USERNAME
 # - WHATPULSE_API_BASE  ← デフォルト: http://localhost:3490（通常は変更不要）
-# - TARGET_DATE_OFFSET_DAYS ← 対象日をずらす日数（例: -1で昨日、0で当日）
+# - TARGET_DATE_OFFSET_DAYS ← 対象日をずらす日数（既定: -1 で前日）
 ```
 
 ### 3. Notionデータベースの準備
@@ -79,7 +79,7 @@ python main.py
 python main.py --date-offset -1
 ```
 
-### 5. スケジューラ登録（毎日22:55自動実行）
+### 5. スケジューラ登録（毎日00:05自動実行）
 
 ```powershell
 # 管理者権限で実行
