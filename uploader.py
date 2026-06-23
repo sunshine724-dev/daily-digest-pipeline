@@ -19,6 +19,59 @@ MAX_RETRIES = 3
 RETRY_DELAY = 2  # 秒
 
 
+def _find_page_id_by_date(db_id: str, target_date: str) -> str | None:
+    """対象日の既存ページIDを取得する。存在しない場合はNone。"""
+    headers = {
+        "Authorization": f"Bearer {config.NOTION_API_TOKEN}",
+        "Notion-Version": "2022-06-28",
+        "Content-Type": "application/json",
+    }
+    url = f"https://api.notion.com/v1/databases/{db_id}/query"
+    payload = {
+        "filter": {
+            "property": "Date",
+            "date": {"equals": target_date},
+        },
+        "page_size": 1,
+    }
+    resp = requests.post(url, headers=headers, json=payload, timeout=10)
+    resp.raise_for_status()
+    results = resp.json().get("results", [])
+    if not results:
+        return None
+    return results[0]["id"]
+
+
+def _replace_page_children(
+    notion: Client, page_id: str, blocks: list[dict[str, Any]]
+) -> None:
+    """ページ配下の既存ブロックを削除し、新しいブロックで置換する。"""
+    start_cursor: str | None = None
+    while True:
+        kwargs: dict[str, Any] = {"block_id": page_id, "page_size": 100}
+        if start_cursor:
+            kwargs["start_cursor"] = start_cursor
+        children = notion.blocks.children.list(**kwargs)
+
+        for child in children.get("results", []):
+            notion.blocks.delete(block_id=child["id"])
+
+        if not children.get("has_more"):
+            break
+        start_cursor = children.get("next_cursor")
+
+    if not blocks:
+        return
+
+    chunk_size = 100
+    for start in range(0, len(blocks), chunk_size):
+        chunk = blocks[start : start + chunk_size]
+        notion.blocks.children.append(
+            block_id=page_id,
+            children=chunk,
+        )
+
+
 def _markdown_to_notion_blocks(markdown: str) -> list[dict[str, Any]]:
     """
     Markdown文字列をNotion APIのブロック形式に変換する。
@@ -90,7 +143,7 @@ def _markdown_to_notion_blocks(markdown: str) -> list[dict[str, Any]]:
         # === 番号付きリスト ===
         if len(line) > 2 and line[0].isdigit() and ". " in line[:5]:
             dot_pos = line.index(". ")
-            text = line[dot_pos + 2:]
+            text = line[dot_pos + 2 :]
             blocks.append(_numbered_list_item(text))
             i += 1
             continue
@@ -107,15 +160,16 @@ def _parse_rich_text(text: str) -> list[dict[str, Any]]:
     テキスト内のMarkdownリンクやボールド等をNotion rich_textに変換する。
     """
     import re
+
     rich_text: list[dict[str, Any]] = []
     # マークダウンリンクを検出: [text](url)
-    pattern = r'\[([^\]]+)\]\(([^)]+)\)'
+    pattern = r"\[([^\]]+)\]\(([^)]+)\)"
     last_end = 0
 
     for match in re.finditer(pattern, text):
         # リンク前のテキスト
         if match.start() > last_end:
-            before = text[last_end:match.start()]
+            before = text[last_end : match.start()]
             if before:
                 rich_text.append(_text_obj(before))
 
@@ -227,12 +281,14 @@ def _table_block(table_lines: list[str]) -> dict[str, Any]:
         # セル数を合わせる
         while len(row) < col_count:
             row.append("")
-        table_rows.append({
-            "type": "table_row",
-            "table_row": {
-                "cells": [[_text_obj(cell)] for cell in row[:col_count]],
-            },
-        })
+        table_rows.append(
+            {
+                "type": "table_row",
+                "table_row": {
+                    "cells": [[_text_obj(cell)] for cell in row[:col_count]],
+                },
+            }
+        )
 
     return {
         "type": "table",
@@ -257,33 +313,34 @@ def get_latest_processed_date() -> str | None:
         headers = {
             "Authorization": f"Bearer {config.NOTION_API_TOKEN}",
             "Notion-Version": "2022-06-28",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
         }
         url = f"https://api.notion.com/v1/databases/{config.MCP_LOG_DB_ID}/query"
         payload = {
             "sorts": [{"property": "Date", "direction": "descending"}],
-            "page_size": 1
+            "page_size": 1,
         }
-        
+
         resp = requests.post(url, headers=headers, json=payload, timeout=10)
         resp.raise_for_status()
-        
+
         results = resp.json().get("results", [])
         if not results:
             return None
-            
+
         latest_page = results[0]
         properties = latest_page.get("properties", {})
         date_prop = properties.get("Date", {})
-        
+
         if date_prop.get("type") == "date" and date_prop.get("date"):
             return date_prop["date"].get("start")
-            
+
         return None
-        
+
     except Exception as e:
         logger.error(f"Notion DBからの最新日付取得に失敗しました: {e}")
         return None
+
 
 def upload(markdown: str, target_date: str, dry_run: bool = False) -> bool:
     """
@@ -314,7 +371,26 @@ def upload(markdown: str, target_date: str, dry_run: bool = False) -> bool:
 
             # 1. Markdownをブロックに変換
             blocks = _markdown_to_notion_blocks(markdown)
-            logger.info(f"{len(blocks)}個のブロックを新規作成中... ({target_date})")
+            logger.info(f"{len(blocks)}個のブロックを作成中... ({target_date})")
+
+            existing_page_id = _find_page_id_by_date(db_id, target_date)
+            if existing_page_id:
+                # 既存ページを上書き更新
+                notion.pages.update(
+                    page_id=existing_page_id,
+                    properties={
+                        "Title": {
+                            "title": [
+                                {"text": {"content": f"Daily Digest {target_date}"}}
+                            ]
+                        },
+                        "Date": {"date": {"start": target_date}},
+                        "AI Summary Generated": {"checkbox": False},
+                    },
+                )
+                _replace_page_children(notion, existing_page_id, blocks)
+                logger.info(f"既存ページを上書き更新しました（{target_date}）")
+                return True
 
             # 2. Notion APIでページを新規作成
             # 1回のリクエストで最大100ブロックまで送信可能
@@ -324,33 +400,39 @@ def upload(markdown: str, target_date: str, dry_run: bool = False) -> bool:
             new_page = notion.pages.create(
                 parent={"database_id": db_id},
                 properties={
-                    "Title": {"title": [{"text": {"content": f"Daily Digest {target_date}"}}]},
+                    "Title": {
+                        "title": [{"text": {"content": f"Daily Digest {target_date}"}}]
+                    },
                     "Date": {"date": {"start": target_date}},
-                    "AI Summary Generated": {"checkbox": False}
+                    "AI Summary Generated": {"checkbox": False},
                 },
-                children=initial_blocks
+                children=initial_blocks,
             )
-            
+
             page_id = new_page["id"]
 
             # 3. 100ブロックを超える場合は追加書き込み
             if remaining_blocks:
                 chunk_size = 100
                 for start in range(0, len(remaining_blocks), chunk_size):
-                    chunk = remaining_blocks[start:start + chunk_size]
+                    chunk = remaining_blocks[start : start + chunk_size]
                     notion.blocks.children.append(
                         block_id=page_id,
                         children=chunk,
                     )
 
-            logger.info(f"Notionデータベースへの新規追加が完了しました（{target_date}）")
+            logger.info(
+                f"Notionデータベースへの新規追加が完了しました（{target_date}）"
+            )
             return True
 
         except APIResponseError as e:
             if e.status == 429 and attempt < MAX_RETRIES:
                 # レートリミット。待機して再試行
                 wait = RETRY_DELAY * attempt
-                logger.warning(f"レートリミット。{wait}秒待機して再試行（{attempt}/{MAX_RETRIES}）")
+                logger.warning(
+                    f"レートリミット。{wait}秒待機して再試行（{attempt}/{MAX_RETRIES}）"
+                )
                 time.sleep(wait)
             else:
                 logger.error(f"Notion API エラー: {e}")

@@ -84,7 +84,7 @@ def _get_credentials() -> Credentials | None:
     return creds
 
 
-def collect(target_date_str: str) -> list[CalendarEventInfo]:
+def collect(target_date_str: str = "") -> list[CalendarEventInfo]:
     """
     指定日のGoogleカレンダーイベントを取得する。
 
@@ -101,6 +101,9 @@ def collect(target_date_str: str) -> list[CalendarEventInfo]:
 
         # 対象日の開始・終了時刻（JST）
         jst = timezone(timedelta(hours=9))
+        if not target_date_str:
+            target_date_str = datetime.now(jst).strftime("%Y-%m-%d")
+
         dt = datetime.strptime(target_date_str, "%Y-%m-%d").replace(tzinfo=jst)
         target_start = dt
         target_end = target_start + timedelta(days=1)

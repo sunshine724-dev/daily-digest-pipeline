@@ -27,7 +27,7 @@ class ChromeSiteInfo(TypedDict):
     visit_count: int
 
 
-def collect(target_date_str: str) -> list[ChromeSiteInfo]:
+def collect(target_date_str: str = "") -> list[ChromeSiteInfo]:
     """
     指定日時のChromeブラウザ履歴を取得する。
 
@@ -59,6 +59,9 @@ def collect(target_date_str: str) -> list[ChromeSiteInfo]:
 
         # 対象日の開始時刻と終了時刻をChrome epochに変換
         # UTCとして扱い、その日の0時0分を設定
+        if not target_date_str:
+            target_date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
         dt = datetime.strptime(target_date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
         target_start_chrome = int(dt.timestamp() * 1_000_000) + _CHROME_EPOCH_OFFSET
         target_end_chrome = int((dt + timedelta(days=1)).timestamp() * 1_000_000) + _CHROME_EPOCH_OFFSET

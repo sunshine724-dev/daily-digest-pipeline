@@ -26,7 +26,7 @@ class WhatPulseStats(TypedDict):
     uptime_seconds: int      # 稼働時間（秒）
 
 
-def collect(target_date_str: str) -> WhatPulseStats | None:
+def collect(target_date_str: str = "") -> WhatPulseStats | None:
     """
     WhatPulse Client APIから統計データを取得する。
 

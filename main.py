@@ -12,8 +12,16 @@ import logging
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 
-from collectors import notion_collector, github_collector, chrome_collector, activitywatch_collector, gcal_collector, whatpulse_collector
+from collectors import (
+    notion_collector,
+    github_collector,
+    chrome_collector,
+    activitywatch_collector,
+    gcal_collector,
+    whatpulse_collector,
+)
 from collectors.notion_collector import NotionPageInfo
 from collectors.github_collector import GitHubRepoActivity
 from collectors.chrome_collector import ChromeSiteInfo
@@ -25,9 +33,14 @@ import uploader
 # 日本時間オフセット
 _JST = timezone(timedelta(hours=9))
 
+
 # ロギング設定
 def setup_logging() -> None:
     """ロギングの初期設定を行う。"""
+    log_dir = Path(".log")
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / f"daily-digest-{datetime.now(_JST).strftime('%Y%m%d')}.log"
+
     log_format = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
     logging.basicConfig(
         level=logging.INFO,
@@ -35,6 +48,7 @@ def setup_logging() -> None:
         datefmt="%Y-%m-%d %H:%M:%S",
         handlers=[
             logging.StreamHandler(sys.stdout),
+            logging.FileHandler(log_file, encoding="utf-8"),
         ],
     )
 
@@ -63,9 +77,15 @@ def collect_all(target_date_str: str) -> dict:
         "notion": ("notion_pages", lambda: notion_collector.collect(target_date_str)),
         "github": ("github_repos", lambda: github_collector.collect(target_date_str)),
         "chrome": ("chrome_sites", lambda: chrome_collector.collect(target_date_str)),
-        "activitywatch": ("app_times", lambda: activitywatch_collector.collect(target_date_str)),
+        "activitywatch": (
+            "app_times",
+            lambda: activitywatch_collector.collect(target_date_str),
+        ),
         "gcal": ("calendar_events", lambda: gcal_collector.collect(target_date_str)),
-        "whatpulse": ("whatpulse_stats", lambda: whatpulse_collector.collect(target_date_str)),
+        "whatpulse": (
+            "whatpulse_stats",
+            lambda: whatpulse_collector.collect(target_date_str),
+        ),
     }
 
     with ThreadPoolExecutor(max_workers=6) as executor:
@@ -92,6 +112,37 @@ def collect_all(target_date_str: str) -> dict:
     return results
 
 
+def build_target_dates(
+    now: datetime,
+    last_date_str: str | None,
+    dry_run: bool,
+    date_offset_days: int,
+) -> list[str]:
+    """実行基準日時から収集対象の日付一覧を作る。"""
+    shifted_now = now + timedelta(days=date_offset_days)
+    shifted_today_str = shifted_now.strftime("%Y-%m-%d")
+
+    if dry_run:
+        return [shifted_today_str]
+
+    target_dates: list[str] = []
+    if last_date_str:
+        last_date = datetime.strptime(last_date_str, "%Y-%m-%d").date()
+        shifted_today_date = shifted_now.date()
+
+        curr_date = last_date + timedelta(days=1)
+        while curr_date <= shifted_today_date:
+            target_dates.append(curr_date.strftime("%Y-%m-%d"))
+            curr_date += timedelta(days=1)
+
+        if not target_dates:
+            target_dates = [shifted_today_str]
+    else:
+        target_dates = [shifted_today_str]
+
+    return target_dates
+
+
 def main() -> None:
     """メイン処理"""
     parser = argparse.ArgumentParser(
@@ -102,47 +153,54 @@ def main() -> None:
         action="store_true",
         help="Notion更新を行わず、生成されたMarkdownをターミナルに出力する",
     )
+    parser.add_argument(
+        "--date-offset",
+        type=int,
+        default=None,
+        help="実行日から収集対象日を何日ずらすか（例: -1で昨日、1で翌日）",
+    )
     args = parser.parse_args()
 
     setup_logging()
     logger = logging.getLogger(__name__)
 
     now = datetime.now(_JST)
-    today_str = now.strftime('%Y-%m-%d')
-    logger.info(f"=== Daily Digest Pipeline 開始 ({now.strftime('%Y-%m-%d %H:%M:%S')} JST) ===")
+    date_offset_days = (
+        args.date_offset if args.date_offset is not None else config.TARGET_DATE_OFFSET_DAYS
+    )
+    shifted_now = now + timedelta(days=date_offset_days)
+    shifted_today_str = shifted_now.strftime("%Y-%m-%d")
+    logger.info(
+        f"=== Daily Digest Pipeline 開始 ({now.strftime('%Y-%m-%d %H:%M:%S')} JST) ==="
+    )
+    logger.info(f"対象日オフセット: {date_offset_days}日")
 
     # 対象日のリストを作成
-    target_dates = []
+    last_date_str = None if args.dry_run else uploader.get_latest_processed_date()
+    target_dates = build_target_dates(
+        now=now,
+        last_date_str=last_date_str,
+        dry_run=args.dry_run,
+        date_offset_days=date_offset_days,
+    )
+
     if args.dry_run:
-        # Dry-run時は今日のみ
-        target_dates = [today_str]
-    else:
-        last_date_str = uploader.get_latest_processed_date()
-        if last_date_str:
-            last_date = datetime.strptime(last_date_str, "%Y-%m-%d").date()
-            today_date = now.date()
-            
-            # 翌日から今日までのリストを作成
-            curr_date = last_date + timedelta(days=1)
-            while curr_date <= today_date:
-                target_dates.append(curr_date.strftime("%Y-%m-%d"))
-                curr_date += timedelta(days=1)
-            
-            # すでに今日まで最新化されていれば何もせず終了する場合も考慮
-            if not target_dates:
-                 logger.info("最新のログがすでに作成されています。実行をスキップします。")
-                 sys.exit(0)
-        else:
-            # Not found or first run
-            target_dates = [today_str]
-            logger.info(f"過去の履歴が見つからないため、今日({today_str})のみを実行します。")
+        logger.info(f"Dry-run時は対象日を {shifted_today_str} に設定します。")
+    elif not last_date_str:
+        logger.info(
+            f"過去の履歴が見つからないため、対象日は {shifted_today_str} のみを実行します。"
+        )
+    elif target_dates == [shifted_today_str]:
+        logger.info(
+            f"最新日付は対象日({shifted_today_str})のため、対象日分を再生成して更新します。"
+        )
 
     logger.info(f"対象となる日付: {target_dates}")
 
     all_success = True
     for target_date_str in target_dates:
         logger.info(f"--- 📅 {target_date_str} の処理を開始 ---")
-        
+
         # 1. データ収集
         logger.info(f"📥 データ収集を開始 ({target_date_str})...")
         data = collect_all(target_date_str)
@@ -156,16 +214,20 @@ def main() -> None:
             app_times=data["app_times"],
             calendar_events=data["calendar_events"],
             whatpulse_stats=data["whatpulse_stats"],
-            target_date_str=target_date_str
+            target_date_str=target_date_str,
         )
 
         # 3. アップロード
         if args.dry_run:
             logger.info("🔍 DRY RUN モード — Notion更新はスキップします")
-            success = uploader.upload(markdown, target_date=target_date_str, dry_run=True)
+            success = uploader.upload(
+                markdown, target_date=target_date_str, dry_run=True
+            )
         else:
             logger.info(f"📤 MCPログデータベースを更新中... ({target_date_str})")
-            success = uploader.upload(markdown, target_date=target_date_str, dry_run=False)
+            success = uploader.upload(
+                markdown, target_date=target_date_str, dry_run=False
+            )
 
         if not success:
             logger.error(f"❌ {target_date_str} の記録に失敗しました。")
@@ -179,4 +241,11 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        # setup_logging前の致命的エラーでもファイルに残せるようにする
+        if not logging.getLogger().handlers:
+            setup_logging()
+        logging.getLogger(__name__).exception("予期しない例外により処理を終了しました")
+        sys.exit(1)

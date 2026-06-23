@@ -20,7 +20,7 @@ class AppTimeEntry(TypedDict):
     duration_seconds: float
 
 
-def collect(target_date_str: str) -> list[AppTimeEntry]:
+def collect(target_date_str: str = "") -> list[AppTimeEntry]:
     """
     ActivityWatchから指定日のアプリ別時間配分を取得する。
     
@@ -51,6 +51,9 @@ def collect(target_date_str: str) -> list[AppTimeEntry]:
             return []
 
         # 対象日の開始・終了時刻
+        if not target_date_str:
+            target_date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
         # target_date_str は "YYYY-MM-DD" なのでパースする
         dt = datetime.strptime(target_date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
         target_start = dt

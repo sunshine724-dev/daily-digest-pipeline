@@ -22,7 +22,7 @@ class GitHubRepoActivity(TypedDict):
     repo_url: str
 
 
-def collect(target_date_str: str) -> list[GitHubRepoActivity]:
+def collect(target_date_str: str = "") -> list[GitHubRepoActivity]:
     """
     指定日のGitHubアクティビティ（コミット）を取得する。
 
@@ -41,6 +41,9 @@ def collect(target_date_str: str) -> list[GitHubRepoActivity]:
         g = Github(config.GITHUB_TOKEN)
 
         # 対象日の開始・終了時刻（UTC）
+        if not target_date_str:
+            target_date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
         dt = datetime.strptime(target_date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
         target_start = dt
         target_end = dt + timedelta(days=1)

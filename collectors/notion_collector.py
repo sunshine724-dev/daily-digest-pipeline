@@ -21,12 +21,12 @@ class NotionPageInfo(TypedDict):
     last_edited: str
 
 
-def collect(target_date_str: str) -> list[NotionPageInfo]:
+def collect(target_date_str: str = "") -> list[NotionPageInfo]:
     """
     指定された日付に編集されたNotionページを取得する。
     
     Args:
-        target_date_str: YYYY-MM-DD形式の日付文字列
+        target_date_str: YYYY-MM-DD形式の日付文字列。未指定時は当日（UTC）を使う
 
     Returns:
         NotionPageInfoのリスト
@@ -34,6 +34,9 @@ def collect(target_date_str: str) -> list[NotionPageInfo]:
     if not config.NOTION_API_TOKEN:
         logger.warning("NOTION_API_TOKEN が設定されていません。Notion収集をスキップします。")
         return []
+
+    if not target_date_str:
+        target_date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     try:
         notion = Client(auth=config.NOTION_API_TOKEN)
