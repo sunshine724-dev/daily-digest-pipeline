@@ -2,7 +2,6 @@
 フォーマッタモジュールのユニットテスト
 """
 
-import pytest
 from formatter import format_digest, format_duration, generate_highlights
 
 

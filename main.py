@@ -22,13 +22,10 @@ from collectors import (
     gcal_collector,
     whatpulse_collector,
 )
-from collectors.notion_collector import NotionPageInfo
-from collectors.github_collector import GitHubRepoActivity
-from collectors.chrome_collector import ChromeSiteInfo
-from collectors.activitywatch_collector import AppTimeEntry
-from collectors.whatpulse_collector import WhatPulseStats
 import formatter
 import uploader
+import config
+
 
 # 日本時間オフセット
 _JST = timezone(timedelta(hours=9))
