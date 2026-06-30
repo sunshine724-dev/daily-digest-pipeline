@@ -1,0 +1,6 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9   # ← 後で autoupdate が最新に書き換えます
+    hooks:
+      - id: ruff
+        args: [--select, "F"]
