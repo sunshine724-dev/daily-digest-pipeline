@@ -8,29 +8,30 @@
 - 固定フォーマットのMarkdownを生成
 - Notion APIで**データベースに新規ページを作成**（日別に1ページ）
 - **未実行日の自動補完**: PCが起動していなかった等の理由でパイプラインが実行されなかった日がある場合、次回実行時にNotionデータベースの最新記録日を参照し、不足分を自動で遡って補完します
-- **23:00** の夜用Notionエージェントが日記ページへ反映
+
+> 本パイプラインの責務は **Notionデータベースへの日次ダイジェスト記録まで** です（以前あった「夜用Notionエージェントによる日記ページへの反映」は現在は使用していません）。
+> 
 
 ## 収集対象
 
-| データソース        | 収集内容                                                           |
-| :------------------ | :----------------------------------------------------------------- |
-| **Notion**          | 指定日に編集されたページのタイトル・URL                            |
-| **GitHub**          | 指定日のコミット（リポジトリ別）                                   |
-| **Chrome**          | 指定日の閲覧履歴（訪問回数順）                                     |
-| **ActivityWatch**   | アプリ別の使用時間                                                 |
-| **Google Calendar** | 指定日の予定一覧                                                   |
-| **WhatPulse**       | キー入力数・クリック数・スクロール数・ネットワーク使用量・稼働時間 |
+| データソース | 収集内容 |
+| --- | --- |
+| **Notion** | 指定日に編集されたページのタイトル・URL |
+| **GitHub** | 指定日のコミット（リポジトリ別） |
+| **Chrome** | 指定日の閲覧履歴（訪問回数順） |
+| **ActivityWatch** | アプリ別の使用時間 |
+| **Google Calendar** | 指定日の予定一覧 |
+| **WhatPulse** | キー入力数・クリック数・スクロール数・ネットワーク使用量・稼働時間 |
 
 ## Notionデータベース構成
 
-パイプラインはNotionの**データベース**にページを追加する方式です。  
-データベースには以下のプロパティが必要です：
+パイプラインはNotionの**データベース**にページを追加する方式です。データベースには以下のプロパティが必要です：
 
-| プロパティ名           | 型               | 説明                                        |
-| :--------------------- | :--------------- | :------------------------------------------ |
-| `Title`                | タイトル         | 「Daily Digest YYYY-MM-DD」が自動設定される |
-| `Date`                 | 日付             | 対象日。未実行日の検出に使用                |
-| `AI Summary Generated` | チェックボックス | Notion AIが要約を書いたかどうかの判定用     |
+| プロパティ名 | 型 | 説明 |
+| --- | --- | --- |
+| `Title` | タイトル | 「Daily Digest YYYY-MM-DD」が自動設定される |
+| `Date` | 日付 | 対象日。未実行日の検出に使用 |
+| `AI Summary Generated` | チェックボックス | Notion AIが要約を書いたかどうかの判定用 |
 
 ## セットアップ
 
@@ -64,7 +65,6 @@ Copy-Item .env.example .env
 2. 上記のプロパティ（`Title`, `Date`, `AI Summary Generated`）を追加
 3. データベースページの **「…」→「コネクトの追加」** から `daily-digest-pipeline` を接続
 4. URLからDatabase IDを取得し、`.env` の `MCP_LOG_DB_ID` に設定
-   - URL例: `https://notion.so/ワークスペース/{Database ID}?v={View ID}`
 
 ### 4. 動作確認
 
@@ -89,11 +89,43 @@ python main.py --date-offset -1
 .\setup_scheduler.ps1 -Remove
 ```
 
-## テスト
+## 開発・品質チェック
+
+開発時のコード品質チェック（lint）・テストの手順です。
+
+### 1. 開発用依存のインストール
+
+```powershell
+pip install -r requirements-dev.txt   # ruff, pre-commit など
+```
+
+### 2. lint（ruff）
+
+```powershell
+ruff check .          # チェックのみ
+ruff check . --fix    # 自動修正（未使用import等）
+```
+
+対象ルールは `--select F`（**F821: 未定義名**、**F401: 未使用import** など）。
+
+### 3. コミット時の自動チェック（pre-commit）
+
+```powershell
+pre-commit install          # 初回のみ。git の pre-commit フックに登録
+pre-commit run --all-files  # 全ファイルに手動実行
+```
+
+`.pre-commit-config.yaml` の設定に従い、`git commit` のたびに変更ファイルへ自動でruffが走り、エラーがあればコミットを中断します。
+
+### 4. テスト
 
 ```powershell
 python -m pytest tests/ -v
 ```
+
+### 5. CI（GitHub Actions）
+
+`.github/workflows/ci.yml` により、**push / Pull Request 時に ruff lint が自動実行**されます。ローカルのpre-commitを入れ忘れても、リモート側で品質チェックが掛かります。
 
 ## プロジェクト構成
 
@@ -113,8 +145,13 @@ daily-digest-pipeline/
 ├── tests/
 │   ├── test_collectors.py
 │   └── test_formatter.py
+├── .github/
+│   └── workflows/
+│       └── ci.yml              # GitHub Actions（ruff lint）
+├── .pre-commit-config.yaml     # pre-commit フック設定（ruff）
 ├── .env.example
 ├── requirements.txt
+├── requirements-dev.txt        # 開発用（ruff, pre-commit）
 ├── setup_scheduler.ps1
 └── README.md
 ```
