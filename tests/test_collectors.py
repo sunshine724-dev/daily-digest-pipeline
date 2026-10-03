@@ -192,3 +192,40 @@ class TestActivityWatchCollector:
             "start": "2026-10-02T00:00:00+09:00",
             "end": "2026-10-03T00:00:00+09:00",
         }
+
+    @patch("collectors.activitywatch_collector.requests")
+    def test_collect_counts_only_active_time_when_afk_bucket_exists(
+        self, mock_requests
+    ):
+        """afk バケットがあれば、クエリ API で操作していた時間だけを数えること"""
+        mock_buckets_resp = MagicMock()
+        mock_buckets_resp.json.return_value = {
+            "aw-watcher-window_test": {"type": "currentwindow"},
+            "aw-watcher-afk_test": {"type": "afkstatus"},
+        }
+        mock_requests.get.return_value = mock_buckets_resp
+
+        mock_query_resp = MagicMock()
+        mock_query_resp.json.return_value = [
+            [
+                {"data": {"app": "Code.exe"}, "duration": 1200},
+                {"data": {"app": "Code.exe"}, "duration": 600},
+                {"data": {"app": "chrome.exe"}, "duration": 300},
+            ]
+        ]
+        mock_requests.post.return_value = mock_query_resp
+
+        from collectors import activitywatch_collector
+        result = activitywatch_collector.collect("2026-10-02")
+
+        payload = mock_requests.post.call_args.kwargs["json"]
+        assert payload["timeperiods"] == [
+            "2026-10-02T00:00:00+09:00/2026-10-03T00:00:00+09:00"
+        ]
+        query = "\n".join(payload["query"])
+        assert 'query_bucket("aw-watcher-afk_test")' in query
+        assert "filter_period_intersect" in query
+        assert result == [
+            {"app_name": "Code.exe", "duration_seconds": 1800},
+            {"app_name": "chrome.exe", "duration_seconds": 300},
+        ]

@@ -23,10 +23,69 @@ class AppTimeEntry(TypedDict):
     duration_seconds: float
 
 
+def _find_bucket(buckets: dict, bucket_type: str) -> str | None:
+    """指定した type の最初のバケットIDを返す。無ければNone。"""
+    for bucket_id, bucket_info in buckets.items():
+        if bucket_info.get("type") == bucket_type:
+            return bucket_id
+    return None
+
+
+def _query_active_window_events(
+    base_url: str,
+    window_bucket_id: str,
+    afk_bucket_id: str,
+    start: datetime,
+    end: datetime,
+) -> list[dict]:
+    """
+    クエリ API で、操作していた（not-afk）区間と重なるウィンドウイベントだけを返す。
+    ActivityWatch の画面が「アクティブな時間」を出すときと同じ計算。
+    """
+    query = [
+        f'window_events = query_bucket("{window_bucket_id}");',
+        f'afk_events = query_bucket("{afk_bucket_id}");',
+        'not_afk = filter_keyvals(afk_events, "status", ["not-afk"]);',
+        "RETURN = filter_period_intersect(window_events, not_afk);",
+    ]
+    payload = {
+        "timeperiods": [f"{start.isoformat()}/{end.isoformat()}"],
+        "query": query,
+    }
+    resp = requests.post(f"{base_url}/api/0/query/", json=payload, timeout=30)
+    resp.raise_for_status()
+    return resp.json()[0]
+
+
+def _fetch_window_events(
+    base_url: str, window_bucket_id: str, start: datetime, end: datetime
+) -> list[dict]:
+    """ウィンドウイベントを離席判定なしでそのまま返す。"""
+    events_url = f"{base_url}/api/0/buckets/{window_bucket_id}/events"
+    params = {"start": start.isoformat(), "end": end.isoformat()}
+    resp = requests.get(events_url, params=params, timeout=10)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _sum_by_app(events: list[dict]) -> list[AppTimeEntry]:
+    """イベントをアプリ別に合計し、使用時間の長い順に並べる。"""
+    app_times: dict[str, float] = {}
+    for event in events:
+        app = event.get("data", {}).get("app", "Unknown")
+        app_times[app] = app_times.get(app, 0) + event.get("duration", 0)
+
+    return [
+        AppTimeEntry(app_name=app, duration_seconds=dur)
+        for app, dur in sorted(app_times.items(), key=lambda x: x[1], reverse=True)
+    ]
+
+
 def collect(target_date_str: str = "") -> list[AppTimeEntry]:
     """
     ActivityWatchから指定日のアプリ別時間配分を取得する。
-    
+    afk バケットがあれば、操作していた時間だけを数える。
+
     Args:
         target_date_str: YYYY-MM-DD形式の日付文字列
 
@@ -42,16 +101,11 @@ def collect(target_date_str: str = "") -> list[AppTimeEntry]:
         resp.raise_for_status()
         buckets = resp.json()
 
-        # aw-watcher-window バケットを探す
-        window_bucket_id = None
-        for bucket_id, bucket_info in buckets.items():
-            if bucket_info.get("type") == "currentwindow":
-                window_bucket_id = bucket_id
-                break
-
+        window_bucket_id = _find_bucket(buckets, "currentwindow")
         if not window_bucket_id:
             logger.warning("aw-watcher-window バケットが見つかりません。")
             return []
+        afk_bucket_id = _find_bucket(buckets, "afkstatus")
 
         # 対象日の開始・終了時刻
         if not target_date_str:
@@ -62,34 +116,20 @@ def collect(target_date_str: str = "") -> list[AppTimeEntry]:
         target_start = dt
         tomorrow_start = target_start + timedelta(days=1)
 
-        # イベントを取得
-        events_url = f"{base_url}/api/0/buckets/{window_bucket_id}/events"
-        params = {
-            "start": target_start.isoformat(),
-            "end": tomorrow_start.isoformat(),
-        }
-        resp = requests.get(events_url, params=params, timeout=10)
-        resp.raise_for_status()
-        events = resp.json()
+        if afk_bucket_id:
+            events = _query_active_window_events(
+                base_url, window_bucket_id, afk_bucket_id, target_start, tomorrow_start
+            )
+        else:
+            # 離席中も前面のアプリの時間として数えられるので、合計は実際の操作時間より長くなる
+            logger.warning(
+                "aw-watcher-afk バケットが見つからないため、離席中の時間も含めて集計します。"
+            )
+            events = _fetch_window_events(
+                base_url, window_bucket_id, target_start, tomorrow_start
+            )
 
-        # アプリ別に集計
-        app_times: dict[str, float] = {}
-        for event in events:
-            data = event.get("data", {})
-            app = data.get("app", "Unknown")
-            duration = event.get("duration", 0)
-
-            if app in app_times:
-                app_times[app] += duration
-            else:
-                app_times[app] = duration
-
-        # 使用時間の長い順にソート
-        results = [
-            AppTimeEntry(app_name=app, duration_seconds=dur)
-            for app, dur in sorted(app_times.items(), key=lambda x: x[1], reverse=True)
-        ]
-
+        results = _sum_by_app(events)
         logger.info(f"ActivityWatch: {len(results)}件のアプリ使用データを取得しました。")
         return results
 
