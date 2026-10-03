@@ -6,8 +6,17 @@
 
 - **00:05** に自動実行し、前日の作業データを収集
 - 固定フォーマットのMarkdownを生成
-- Notion APIで**データベースに新規ページを作成**（日別に1ページ）
-- **未実行日の自動補完**: PCが起動していなかった等の理由でパイプラインが実行されなかった日がある場合、次回実行時にNotionデータベースの最新記録日を参照し、不足分を自動で遡って補完します
+- Notion APIで**データベースに新規ページを作成**（日別・端末別に1ページ。Win と Mac の両方で動かせる）
+- **未実行日の自動補完**: PCが起動していなかった等の理由でパイプラインが実行されなかった日がある場合、次回実行時にNotionデータベースの**その端末の**最新記録日を参照し、不足分を自動で遡って補完します
+
+### 端末ごとの収集対象
+
+| 端末 | 収集するもの | 理由 |
+| --- | --- | --- |
+| Win | 全部 | |
+| Mac | ActivityWatch・WhatPulse だけ | Chrome は Win の履歴に他端末の閲覧が同期されている。Notion・GitHub・カレンダーはアカウント全体のデータ |
+
+端末は `.env` の `DEVICE_NAME` が空なら OS から決まります（macOS なら `Mac`、それ以外は `Win`）。収集対象は `COLLECTORS` で上書きできます。
 
 > 本パイプラインの責務は **Notionデータベースへの日次ダイジェスト記録まで** です（以前あった「夜用Notionエージェントによる日記ページへの反映」は現在は使用していません）。
 > 
@@ -29,7 +38,8 @@
 
 | プロパティ名 | 型 | 説明 |
 | --- | --- | --- |
-| `Title` | タイトル | 「Daily Digest YYYY-MM-DD」が自動設定される |
+| `Title` | タイトル | 「Daily Digest YYYY-MM-DD」が自動設定される（Mac は末尾に「 (Mac)」） |
+| `端末` | セレクト | `Win` / `Mac`。既存ページの検索と補完の最新日はこの列で端末ごとに絞る |
 | `Date` | 日付 | 対象日。未実行日の検出に使用 |
 | `AI Summary Generated` | チェックボックス | Notion AIが要約を書いたかどうかの判定用 |
 
@@ -57,6 +67,8 @@ Copy-Item .env.example .env
 # - GITHUB_USERNAME
 # - WHATPULSE_API_BASE  ← デフォルト: http://localhost:3490（通常は変更不要）
 # - TARGET_DATE_OFFSET_DAYS ← 対象日をずらす日数（既定: -1 で前日）
+# - DEVICE_NAME ← 空なら OS から Win / Mac を決める（通常は変更不要）
+# - COLLECTORS ← 収集対象（空なら Win は全部、Mac は activitywatch,whatpulse）
 ```
 
 ### 3. Notionデータベースの準備

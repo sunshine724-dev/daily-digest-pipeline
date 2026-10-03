@@ -85,9 +85,17 @@ def collect_all(target_date_str: str) -> dict:
         ),
     }
 
+    unknown = [name for name in config.COLLECTORS if name not in tasks]
+    if unknown:
+        logger.warning(f"不明な収集対象を無視します: {unknown}")
+    enabled = {
+        name: task for name, task in tasks.items() if name in config.COLLECTORS
+    }
+    logger.info(f"端末: {config.DEVICE_NAME} / 収集対象: {list(enabled)}")
+
     with ThreadPoolExecutor(max_workers=6) as executor:
         future_to_name = {}
-        for name, (key, func) in tasks.items():
+        for name, (key, func) in enabled.items():
             future = executor.submit(func)
             future_to_name[future] = (name, key)
 

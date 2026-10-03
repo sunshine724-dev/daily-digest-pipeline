@@ -19,8 +19,30 @@ MAX_RETRIES = 3
 RETRY_DELAY = 2  # 秒
 
 
+def _device_filter() -> dict[str, Any]:
+    """この端末のページだけに絞る Notion のフィルタ。"""
+    return {"property": "端末", "select": {"equals": config.DEVICE_NAME}}
+
+
+def _page_title(target_date: str) -> str:
+    """ページタイトル。Win は従来の形のまま、それ以外は端末名を付ける。"""
+    if config.DEVICE_NAME == "Win":
+        return f"Daily Digest {target_date}"
+    return f"Daily Digest {target_date} ({config.DEVICE_NAME})"
+
+
+def _page_properties(target_date: str) -> dict[str, Any]:
+    """作成・上書きで共通のページプロパティ。"""
+    return {
+        "Title": {"title": [{"text": {"content": _page_title(target_date)}}]},
+        "Date": {"date": {"start": target_date}},
+        "端末": {"select": {"name": config.DEVICE_NAME}},
+        "AI Summary Generated": {"checkbox": False},
+    }
+
+
 def _find_page_id_by_date(db_id: str, target_date: str) -> str | None:
-    """対象日の既存ページIDを取得する。存在しない場合はNone。"""
+    """この端末の対象日の既存ページIDを取得する。存在しない場合はNone。"""
     headers = {
         "Authorization": f"Bearer {config.NOTION_API_TOKEN}",
         "Notion-Version": "2022-06-28",
@@ -29,8 +51,10 @@ def _find_page_id_by_date(db_id: str, target_date: str) -> str | None:
     url = f"https://api.notion.com/v1/databases/{db_id}/query"
     payload = {
         "filter": {
-            "property": "Date",
-            "date": {"equals": target_date},
+            "and": [
+                {"property": "Date", "date": {"equals": target_date}},
+                _device_filter(),
+            ]
         },
         "page_size": 1,
     }
@@ -303,7 +327,7 @@ def _table_block(table_lines: list[str]) -> dict[str, Any]:
 
 def get_latest_processed_date() -> str | None:
     """
-    Notionのデータベースから一番最後に作成されたログの日付を取得する。
+    Notionのデータベースから、この端末で一番最後に作成されたログの日付を取得する。
     """
     if not config.NOTION_API_TOKEN or not config.MCP_LOG_DB_ID:
         logger.warning("NOTION_API_TOKEN または MCP_LOG_DB_ID が設定されていません。")
@@ -317,6 +341,7 @@ def get_latest_processed_date() -> str | None:
         }
         url = f"https://api.notion.com/v1/databases/{config.MCP_LOG_DB_ID}/query"
         payload = {
+            "filter": _device_filter(),
             "sorts": [{"property": "Date", "direction": "descending"}],
             "page_size": 1,
         }
@@ -378,15 +403,7 @@ def upload(markdown: str, target_date: str, dry_run: bool = False) -> bool:
                 # 既存ページを上書き更新
                 notion.pages.update(
                     page_id=existing_page_id,
-                    properties={
-                        "Title": {
-                            "title": [
-                                {"text": {"content": f"Daily Digest {target_date}"}}
-                            ]
-                        },
-                        "Date": {"date": {"start": target_date}},
-                        "AI Summary Generated": {"checkbox": False},
-                    },
+                    properties=_page_properties(target_date),
                 )
                 _replace_page_children(notion, existing_page_id, blocks)
                 logger.info(f"既存ページを上書き更新しました（{target_date}）")
@@ -399,13 +416,7 @@ def upload(markdown: str, target_date: str, dry_run: bool = False) -> bool:
 
             new_page = notion.pages.create(
                 parent={"database_id": db_id},
-                properties={
-                    "Title": {
-                        "title": [{"text": {"content": f"Daily Digest {target_date}"}}]
-                    },
-                    "Date": {"date": {"start": target_date}},
-                    "AI Summary Generated": {"checkbox": False},
-                },
+                properties=_page_properties(target_date),
                 children=initial_blocks,
             )
 

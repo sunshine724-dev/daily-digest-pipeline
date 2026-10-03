@@ -172,3 +172,23 @@ class TestActivityWatchCollector:
         # Code.exe の合計は 5400秒
         code_entry = next(e for e in result if e["app_name"] == "Code.exe")
         assert code_entry["duration_seconds"] == 5400
+
+    @patch("collectors.activitywatch_collector.requests")
+    def test_collect_uses_jst_day_boundaries(self, mock_requests):
+        """対象日を JST の 0:00〜24:00 で区切ること"""
+        mock_buckets_resp = MagicMock()
+        mock_buckets_resp.json.return_value = {
+            "aw-watcher-window_test": {"type": "currentwindow"}
+        }
+        mock_events_resp = MagicMock()
+        mock_events_resp.json.return_value = []
+        mock_requests.get.side_effect = [mock_buckets_resp, mock_events_resp]
+
+        from collectors import activitywatch_collector
+        activitywatch_collector.collect("2026-10-02")
+
+        params = mock_requests.get.call_args_list[1].kwargs["params"]
+        assert params == {
+            "start": "2026-10-02T00:00:00+09:00",
+            "end": "2026-10-03T00:00:00+09:00",
+        }

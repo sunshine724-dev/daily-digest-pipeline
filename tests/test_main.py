@@ -4,8 +4,38 @@ main モジュールのテスト
 """
 
 from datetime import datetime, timezone
+from unittest.mock import patch
 
-from main import build_target_dates
+import config
+from main import build_target_dates, collect_all
+
+
+class TestCollectAll:
+    """収集対象の絞り込みのテスト"""
+
+    @patch("main.whatpulse_collector")
+    @patch("main.gcal_collector")
+    @patch("main.activitywatch_collector")
+    @patch("main.chrome_collector")
+    @patch("main.github_collector")
+    @patch("main.notion_collector")
+    def test_runs_only_configured_collectors(
+        self, notion, github, chrome, activitywatch, gcal, whatpulse, monkeypatch
+    ):
+        monkeypatch.setattr(config, "COLLECTORS", ("activitywatch", "whatpulse"))
+        activitywatch.collect.return_value = [
+            {"app_name": "Code", "duration_seconds": 60}
+        ]
+        whatpulse.collect.return_value = {"keys": 1}
+
+        result = collect_all("2026-10-03")
+
+        activitywatch.collect.assert_called_once_with("2026-10-03")
+        whatpulse.collect.assert_called_once_with("2026-10-03")
+        for skipped in (notion, github, chrome, gcal):
+            skipped.collect.assert_not_called()
+        assert result["chrome_sites"] == []
+        assert result["app_times"] == [{"app_name": "Code", "duration_seconds": 60}]
 
 
 class TestBuildTargetDates:

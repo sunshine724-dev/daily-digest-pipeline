@@ -4,11 +4,49 @@
 """
 
 import os
+import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
 # .envファイルの読み込み
 load_dotenv(Path(__file__).parent / ".env")
+
+
+# === 端末 ===
+ALL_COLLECTORS: tuple[str, ...] = (
+    "notion",
+    "github",
+    "chrome",
+    "activitywatch",
+    "gcal",
+    "whatpulse",
+)
+
+# Mac では PC ごとのデータだけを集める。Chrome は Win の履歴に他端末の閲覧が同期されており、
+# Notion・GitHub・カレンダーはアカウント全体のデータなので、Win 側だけで集める（2026-10-03 決定）
+MAC_COLLECTORS: tuple[str, ...] = ("activitywatch", "whatpulse")
+
+
+def default_device_name(platform: str) -> str:
+    """OS から Daily Digest DB の「端末」列に入れる値を決める。"""
+    return "Mac" if platform == "darwin" else "Win"
+
+
+def default_collectors(device_name: str) -> tuple[str, ...]:
+    """端末ごとの既定の収集対象を返す。"""
+    return MAC_COLLECTORS if device_name == "Mac" else ALL_COLLECTORS
+
+
+def parse_collectors(value: str) -> tuple[str, ...]:
+    """カンマ区切りの収集対象名を tuple にする。空要素は捨てる。"""
+    return tuple(name.strip() for name in value.split(",") if name.strip())
+
+
+# .env の指定が無いときは OS から決める。Mac で書き忘れても Win のページを上書きしないようにするため
+DEVICE_NAME: str = os.getenv("DEVICE_NAME") or default_device_name(sys.platform)
+COLLECTORS: tuple[str, ...] = (
+    parse_collectors(os.getenv("COLLECTORS", "")) or default_collectors(DEVICE_NAME)
+)
 
 
 # === Notion API ===

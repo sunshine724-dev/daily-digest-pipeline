@@ -13,6 +13,9 @@ import config
 
 logger = logging.getLogger(__name__)
 
+# 対象日は JST の 0:00〜24:00 で区切る（以前は UTC で切っており、JST 9:00〜翌9:00 を数えていた）
+_JST = timezone(timedelta(hours=9))
+
 
 class AppTimeEntry(TypedDict):
     """アプリ別時間配分"""
@@ -52,10 +55,10 @@ def collect(target_date_str: str = "") -> list[AppTimeEntry]:
 
         # 対象日の開始・終了時刻
         if not target_date_str:
-            target_date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            target_date_str = datetime.now(_JST).strftime("%Y-%m-%d")
 
         # target_date_str は "YYYY-MM-DD" なのでパースする
-        dt = datetime.strptime(target_date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        dt = datetime.strptime(target_date_str, "%Y-%m-%d").replace(tzinfo=_JST)
         target_start = dt
         tomorrow_start = target_start + timedelta(days=1)
 
