@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from unittest.mock import patch
 
 import config
-from main import build_target_dates, collect_all
+from main import build_target_dates, collect_all, find_skip_reason
 
 
 class TestCollectAll:
@@ -76,3 +76,46 @@ class TestBuildTargetDates:
         )
 
         assert result == ["2026-06-22"]
+
+class TestFindSkipReason:
+    """定期起動の回を実行しない判定のテスト"""
+
+    @patch("main.uploader")
+    @patch("main.user_activity")
+    def test_runs_when_no_flags(self, user_activity, uploader):
+        assert find_skip_reason("2026-10-04", False, False) is None
+        user_activity.get_idle_seconds.assert_not_called()
+        uploader.page_exists.assert_not_called()
+
+    @patch("main.uploader")
+    @patch("main.user_activity")
+    def test_skips_when_user_idle(self, user_activity, uploader):
+        user_activity.get_idle_seconds.return_value = 600
+
+        assert find_skip_reason("2026-10-04", True, True) is not None
+        uploader.page_exists.assert_not_called()
+
+    @patch("main.uploader")
+    @patch("main.user_activity")
+    def test_runs_when_user_active_and_not_done(self, user_activity, uploader):
+        user_activity.get_idle_seconds.return_value = 30
+        uploader.page_exists.return_value = False
+
+        assert find_skip_reason("2026-10-04", True, True) is None
+        uploader.page_exists.assert_called_once_with("2026-10-04")
+
+    @patch("main.uploader")
+    @patch("main.user_activity")
+    def test_runs_when_idle_time_unavailable(self, user_activity, uploader):
+        user_activity.get_idle_seconds.return_value = None
+        uploader.page_exists.return_value = False
+
+        assert find_skip_reason("2026-10-04", True, False) is None
+
+    @patch("main.uploader")
+    @patch("main.user_activity")
+    def test_skips_when_page_exists(self, user_activity, uploader):
+        uploader.page_exists.return_value = True
+
+        assert find_skip_reason("2026-10-04", False, True) is not None
+        user_activity.get_idle_seconds.assert_not_called()
