@@ -69,6 +69,22 @@ def _find_page_id_by_date(db_id: str, target_date: str) -> str | None:
     return results[0]["id"]
 
 
+def page_exists(target_date: str) -> bool:
+    """
+    この端末の対象日のページがNotionデータベースにあるかを返す。
+
+    Args:
+        target_date: 対象日の文字列（例: '2026-04-10'）
+
+    Returns:
+        ページがあればTrue
+
+    Raises:
+        requests.RequestException: Notion APIへの問い合わせに失敗した場合
+    """
+    return _find_page_id_by_date(config.MCP_LOG_DB_ID, target_date) is not None
+
+
 def _replace_page_children(
     notion: Client, page_id: str, blocks: list[dict[str, Any]]
 ) -> None:

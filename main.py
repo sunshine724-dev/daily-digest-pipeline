@@ -5,6 +5,7 @@ Daily Digest Pipeline — メインオーケストレータ
 使用方法:
     python main.py              # 通常実行
     python main.py --dry-run    # Notion更新なし（ターミナル出力のみ）
+    python main.py --require-active-user --skip-if-done  # 定期起動用（Mac の launchd）
 """
 
 import argparse
@@ -25,10 +26,15 @@ from collectors import (
 import formatter
 import uploader
 import config
+import user_activity
 
 
 # 日本時間オフセット
 _JST = timezone(timedelta(hours=9))
+
+# Mac が DarkWake で数秒だけ起きた時点で起動すると、通信中に再スリープして
+# 何時間も止まるため、直近に操作がない回は実行しない
+_ACTIVE_USER_IDLE_LIMIT_SECONDS = 10 * 60
 
 
 # ロギング設定
@@ -151,6 +157,36 @@ def build_target_dates(
     return target_dates
 
 
+def find_skip_reason(
+    target_date_str: str,
+    require_active_user: bool,
+    skip_if_done: bool,
+) -> str | None:
+    """
+    定期起動の回を実行せずに終えるべきかを判定する。
+
+    Args:
+        target_date_str: この回の対象日（例: '2026-10-04'）
+        require_active_user: 直近に操作がなければ実行しない
+        skip_if_done: この端末の対象日のページがあれば実行しない
+
+    Returns:
+        実行しない理由。実行すべきならNone
+
+    Raises:
+        requests.RequestException: skip_if_done の確認でNotion APIに失敗した場合
+    """
+    if require_active_user:
+        idle_seconds = user_activity.get_idle_seconds()
+        if idle_seconds is not None and idle_seconds >= _ACTIVE_USER_IDLE_LIMIT_SECONDS:
+            return f"最後の操作から {idle_seconds / 60:.0f} 分経過しているため実行しません。"
+
+    if skip_if_done and uploader.page_exists(target_date_str):
+        return f"{target_date_str} のページは作成済みのため実行しません。"
+
+    return None
+
+
 def main() -> None:
     """メイン処理"""
     parser = argparse.ArgumentParser(
@@ -167,6 +203,16 @@ def main() -> None:
         default=None,
         help="実行日から収集対象日を何日ずらすか（例: -1で昨日、1で翌日）",
     )
+    parser.add_argument(
+        "--require-active-user",
+        action="store_true",
+        help="最後のキーボード・マウス操作から10分以上経っていれば何もせず終了する",
+    )
+    parser.add_argument(
+        "--skip-if-done",
+        action="store_true",
+        help="この端末の対象日のページが作成済みなら何もせず終了する",
+    )
     args = parser.parse_args()
 
     setup_logging()
@@ -182,6 +228,16 @@ def main() -> None:
         f"=== Daily Digest Pipeline 開始 ({now.strftime('%Y-%m-%d %H:%M:%S')} JST) ==="
     )
     logger.info(f"対象日オフセット: {date_offset_days}日")
+
+    if not args.dry_run:
+        skip_reason = find_skip_reason(
+            target_date_str=shifted_today_str,
+            require_active_user=args.require_active_user,
+            skip_if_done=args.skip_if_done,
+        )
+        if skip_reason:
+            logger.info(skip_reason)
+            return
 
     # 対象日のリストを作成
     last_date_str = None if args.dry_run else uploader.get_latest_processed_date()

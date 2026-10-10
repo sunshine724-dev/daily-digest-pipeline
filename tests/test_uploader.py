@@ -115,3 +115,16 @@ class TestToggleHeading:
         blocks = uploader._markdown_to_notion_blocks("### ⏱ Time Tracking")
 
         assert "is_toggleable" not in blocks[0]["heading_3"]
+class TestPageExists:
+    """対象日のページ有無の判定のテスト"""
+
+    @patch("uploader._find_page_id_by_date", return_value="page-mac")
+    def test_true_when_page_found(self, find_page, monkeypatch):
+        monkeypatch.setattr(config, "MCP_LOG_DB_ID", "db")
+
+        assert uploader.page_exists("2026-10-04") is True
+        find_page.assert_called_once_with("db", "2026-10-04")
+
+    @patch("uploader._find_page_id_by_date", return_value=None)
+    def test_false_when_page_missing(self, find_page):
+        assert uploader.page_exists("2026-10-04") is False
