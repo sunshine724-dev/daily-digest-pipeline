@@ -2,7 +2,12 @@
 フォーマッタモジュールのユニットテスト
 """
 
-from formatter import format_digest, format_duration, generate_highlights
+from formatter import (
+    format_digest,
+    format_duration,
+    format_timeline_line,
+    generate_highlights,
+)
 
 
 class TestFormatDuration:
@@ -70,3 +75,70 @@ class TestFormatDigest:
         result = format_digest([], [], [], [])
         assert "Daily Digest" in result
         assert "アクティビティなし" in result
+
+
+def _slot(start, *apps):
+    return {
+        "start": start,
+        "apps": [
+            {"app_name": name, "duration_seconds": seconds, "title": title}
+            for name, seconds, title in apps
+        ],
+    }
+
+
+class TestFormatTimelineLine:
+    """15分の時間帯1行の書き方のテスト"""
+
+    def test_shows_top_apps_and_folds_rest(self):
+        """上位3つを分数つきで出し、残りを「他」にまとめ、.exe を外すこと"""
+        line = format_timeline_line(_slot(
+            "10:45",
+            ("Code.exe", 540, None),
+            ("chrome.exe", 240, "juice-shop/juice-shop - Google Chrome"),
+            ("WindowsTerminal.exe", 60, None),
+            ("Discord.exe", 50, None),
+            ("SearchHost.exe", 40, None),
+        ))
+
+        assert line == (
+            "10:45 Code 9m, chrome 4m（juice-shop/juice-shop）, WindowsTerminal 1m, 他 2m"
+        )
+
+    def test_skips_apps_under_one_minute(self):
+        """1分未満のアプリは載せず、全部1分未満なら行を出さないこと"""
+        assert format_timeline_line(_slot("06:15", ("explorer.exe", 29, None))) is None
+        assert (
+            format_timeline_line(_slot("06:30", ("Code.exe", 120, None), ("explorer.exe", 20, None)))
+            == "06:30 Code 2m"
+        )
+
+    def test_truncates_long_title(self):
+        """長いページ名は40字で切ること"""
+        line = format_timeline_line(_slot("09:00", ("chrome.exe", 600, "あ" * 50)))
+
+        assert line == "09:00 chrome 10m（" + "あ" * 40 + "…）"
+
+
+class TestFormatDigestTimeline:
+    """format_digest の時間帯の節のテスト"""
+
+    def test_timeline_section_is_toggle_before_footer(self):
+        """時間帯の節を折りたたみ見出しでフッターの前に出すこと"""
+        result = format_digest(
+            [], [], [], [],
+            timeline=[
+                _slot("09:00", ("Code.exe", 600, None)),
+                _slot("09:15", ("explorer.exe", 10, None)),
+            ],
+        )
+
+        lines = result.split("\n")
+        heading = lines.index("### ▶ 🕒 Timeline（15分・JST）")
+        assert lines[heading + 1] == "- 09:00 Code 10m"
+        assert lines[heading + 2] == ""
+        assert heading < lines.index("---")
+
+    def test_no_timeline_section_without_data(self):
+        """時間帯のデータが無ければ節を出さないこと"""
+        assert "Timeline" not in format_digest([], [], [], [])

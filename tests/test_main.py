@@ -23,9 +23,10 @@ class TestCollectAll:
         self, notion, github, chrome, activitywatch, gcal, whatpulse, monkeypatch
     ):
         monkeypatch.setattr(config, "COLLECTORS", ("activitywatch", "whatpulse"))
-        activitywatch.collect.return_value = [
-            {"app_name": "Code", "duration_seconds": 60}
-        ]
+        activitywatch.collect.return_value = {
+            "app_times": [{"app_name": "Code", "duration_seconds": 60}],
+            "timeline": [{"start": "09:00", "apps": []}],
+        }
         whatpulse.collect.return_value = {"keys": 1}
 
         result = collect_all("2026-10-03")
@@ -36,6 +37,19 @@ class TestCollectAll:
             skipped.collect.assert_not_called()
         assert result["chrome_sites"] == []
         assert result["app_times"] == [{"app_name": "Code", "duration_seconds": 60}]
+        assert result["timeline"] == [{"start": "09:00", "apps": []}]
+
+    @patch("main.activitywatch_collector")
+    def test_activity_defaults_to_empty_when_not_collected(
+        self, activitywatch, monkeypatch
+    ):
+        monkeypatch.setattr(config, "COLLECTORS", ())
+
+        result = collect_all("2026-10-03")
+
+        assert result["app_times"] == []
+        assert result["timeline"] == []
+        assert "activity" not in result
 
 
 class TestBuildTargetDates:

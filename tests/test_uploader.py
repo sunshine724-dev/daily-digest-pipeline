@@ -77,3 +77,41 @@ class TestDeviceScopedQueries:
         payload = mock_requests.post.call_args.kwargs["json"]
         assert payload["filter"] == {"property": "端末", "select": {"equals": "Win"}}
         assert latest == "2026-10-02"
+
+
+class TestToggleHeading:
+    """折りたたみ見出しへの変換のテスト"""
+
+    def test_toggle_heading_contains_following_bullets_as_plain_text(self):
+        markdown = "\n".join([
+            "### ▶ 🕒 Timeline（15分・JST）",
+            "- 09:00 chrome 5m（[PR] fix (#12)）",
+            "- 09:15 Code 10m",
+            "",
+            "---",
+        ])
+
+        blocks = uploader._markdown_to_notion_blocks(markdown)
+
+        assert [b["type"] for b in blocks] == ["heading_3", "divider"]
+        heading = blocks[0]["heading_3"]
+        assert heading["is_toggleable"] is True
+        assert heading["rich_text"][0]["text"]["content"] == "🕒 Timeline（15分・JST）"
+        contents = [
+            child["bulleted_list_item"]["rich_text"][0]["text"]["content"]
+            for child in heading["children"]
+        ]
+        assert contents == ["09:00 chrome 5m（[PR] fix (#12)）", "09:15 Code 10m"]
+        assert "link" not in heading["children"][0]["bulleted_list_item"]["rich_text"][0]["text"]
+
+    def test_toggle_children_are_capped(self):
+        markdown = "\n".join(["### ▶ T"] + [f"- {i}" for i in range(105)])
+
+        blocks = uploader._markdown_to_notion_blocks(markdown)
+
+        assert len(blocks[0]["heading_3"]["children"]) == 100
+
+    def test_plain_heading_is_not_toggle(self):
+        blocks = uploader._markdown_to_notion_blocks("### ⏱ Time Tracking")
+
+        assert "is_toggleable" not in blocks[0]["heading_3"]

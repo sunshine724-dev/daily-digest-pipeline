@@ -4,7 +4,7 @@
 """
 
 from unittest.mock import patch, MagicMock
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 
 class TestNotionCollector:
@@ -168,10 +168,12 @@ class TestActivityWatchCollector:
         from collectors import activitywatch_collector
         result = activitywatch_collector.collect()
 
-        assert len(result) == 2
+        assert len(result["app_times"]) == 2
         # Code.exe の合計は 5400秒
-        code_entry = next(e for e in result if e["app_name"] == "Code.exe")
+        code_entry = next(e for e in result["app_times"] if e["app_name"] == "Code.exe")
         assert code_entry["duration_seconds"] == 5400
+        # timestamp の無いイベントは時間帯に振り分けられない
+        assert result["timeline"] == []
 
     @patch("collectors.activitywatch_collector.requests")
     def test_collect_uses_jst_day_boundaries(self, mock_requests):
@@ -225,7 +227,103 @@ class TestActivityWatchCollector:
         query = "\n".join(payload["query"])
         assert 'query_bucket("aw-watcher-afk_test")' in query
         assert "filter_period_intersect" in query
-        assert result == [
+        assert result["app_times"] == [
             {"app_name": "Code.exe", "duration_seconds": 1800},
             {"app_name": "chrome.exe", "duration_seconds": 300},
         ]
+
+    @patch("collectors.activitywatch_collector.requests")
+    def test_collect_returns_empty_summary_when_unreachable(self, mock_requests):
+        """ActivityWatch に接続できなければ、合計も時間帯も空で返すこと"""
+        import requests as real_requests
+
+        mock_requests.ConnectionError = real_requests.ConnectionError
+        mock_requests.RequestException = real_requests.RequestException
+        mock_requests.get.side_effect = real_requests.ConnectionError()
+
+        from collectors import activitywatch_collector
+        result = activitywatch_collector.collect("2026-10-02")
+
+        assert result == {"app_times": [], "timeline": []}
+
+
+class TestBuildTimeline:
+    """15分ごとの時間帯への振り分けのテスト"""
+
+    DAY_START = datetime(2026, 10, 2, tzinfo=timezone(timedelta(hours=9)))
+    DAY_END = DAY_START + timedelta(days=1)
+
+    @staticmethod
+    def _event(timestamp: str, seconds: float, app: str, title: str = "") -> dict:
+        return {
+            "timestamp": timestamp,
+            "duration": seconds,
+            "data": {"app": app, "title": title},
+        }
+
+    def _build(self, events):
+        from collectors.activitywatch_collector import _build_timeline
+        return _build_timeline(events, self.DAY_START, self.DAY_END)
+
+    def test_sums_apps_within_slot_in_jst(self):
+        """UTC の timestamp を JST の時間帯に入れ、同じ時間帯のアプリを合計して長い順に並べること"""
+        timeline = self._build([
+            self._event("2026-10-02T01:46:00+00:00", 120, "Code.exe"),
+            self._event("2026-10-02T01:50:00+00:00", 300, "WindowsTerminal.exe"),
+            self._event("2026-10-02T01:56:00+00:00", 180, "Code.exe"),
+        ])
+
+        assert timeline == [
+            {
+                "start": "10:45",
+                "apps": [
+                    {"app_name": "Code.exe", "duration_seconds": 300, "title": None},
+                    {"app_name": "WindowsTerminal.exe", "duration_seconds": 300, "title": None},
+                ],
+            }
+        ]
+
+    def test_splits_event_across_slot_boundary(self):
+        """時間帯の境目をまたぐイベントを境目で分け、使っていない時間帯は出さないこと"""
+        timeline = self._build([
+            self._event("2026-10-02T10:10:00+09:00", 600, "Code.exe"),
+            self._event("2026-10-02T11:00:00+09:00", 60, "Code.exe"),
+        ])
+
+        assert [(s["start"], s["apps"][0]["duration_seconds"]) for s in timeline] == [
+            ("10:00", 300),
+            ("10:15", 300),
+            ("11:00", 60),
+        ]
+
+    def test_clips_to_target_day(self):
+        """対象日の外にはみ出した分は数えないこと"""
+        timeline = self._build([
+            self._event("2026-10-01T23:55:00+09:00", 600, "Code.exe"),
+            self._event("2026-10-02T23:55:00+09:00", 600, "Code.exe"),
+        ])
+
+        assert [(s["start"], s["apps"][0]["duration_seconds"]) for s in timeline] == [
+            ("00:00", 300),
+            ("23:45", 300),
+        ]
+
+    def test_browser_keeps_longest_title_in_slot(self):
+        """ブラウザだけ、その時間帯で合計が最も長かったページ名を持つこと"""
+        timeline = self._build([
+            self._event("2026-10-02T09:00:00+09:00", 120, "chrome.exe", "GitHub"),
+            self._event("2026-10-02T09:02:00+09:00", 60, "chrome.exe", "YouTube"),
+            self._event("2026-10-02T09:03:00+09:00", 120, "chrome.exe", "YouTube"),
+            self._event("2026-10-02T09:05:00+09:00", 60, "Code.exe", "main.py"),
+            self._event("2026-10-02T09:06:00+09:00", 60, "Google Chrome", "Docs"),
+        ])
+
+        apps = {a["app_name"]: a for a in timeline[0]["apps"]}
+        assert apps["chrome.exe"]["title"] == "YouTube"
+        assert apps["chrome.exe"]["duration_seconds"] == 300
+        assert apps["Google Chrome"]["title"] == "Docs"
+        assert apps["Code.exe"]["title"] is None
+
+    def test_skips_events_without_timestamp(self):
+        """timestamp の無いイベントは時間帯に入れないこと"""
+        assert self._build([{"duration": 60, "data": {"app": "Code.exe"}}]) == []

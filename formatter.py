@@ -10,7 +10,7 @@ import config
 from collectors.notion_collector import NotionPageInfo
 from collectors.github_collector import GitHubRepoActivity
 from collectors.chrome_collector import ChromeSiteInfo
-from collectors.activitywatch_collector import AppTimeEntry
+from collectors.activitywatch_collector import AppTimeEntry, TimelineSlot
 from collectors.gcal_collector import CalendarEventInfo
 from collectors.whatpulse_collector import WhatPulseStats
 
@@ -18,6 +18,54 @@ logger = logging.getLogger(__name__)
 
 # 日本時間（JST）のオフセット
 _JST = timezone(timedelta(hours=9))
+
+# uploader はこの接頭辞の見出しを折りたたみ見出しにし、直後の箇条書きを中に入れる
+TOGGLE_HEADING_PREFIX = "### ▶ "
+
+TIMELINE_MAX_APPS = 3
+TIMELINE_TITLE_MAX_CHARS = 40
+_BROWSER_TITLE_SUFFIXES = (" - Google Chrome",)
+
+
+def _timeline_app_name(app_name: str) -> str:
+    return app_name.removesuffix(".exe")
+
+
+def _timeline_title(title: str) -> str:
+    for suffix in _BROWSER_TITLE_SUFFIXES:
+        title = title.removesuffix(suffix)
+    if len(title) > TIMELINE_TITLE_MAX_CHARS:
+        return title[:TIMELINE_TITLE_MAX_CHARS] + "…"
+    return title
+
+
+def format_timeline_line(slot: TimelineSlot) -> str | None:
+    """
+    15分の時間帯1つを `10:45 Code 9m, chrome 4m（ページ名）, 他 2m` の1行にする。
+    1分未満のアプリは載せず、上位 TIMELINE_MAX_APPS 個より後は「他」にまとめる。
+    載せるアプリが無ければ None。
+    """
+    minutes = [(app, round(app["duration_seconds"] / 60)) for app in slot["apps"]]
+    shown = [(app, m) for app, m in minutes if m >= 1][:TIMELINE_MAX_APPS]
+    if not shown:
+        return None
+
+    parts = []
+    for app, m in shown:
+        part = f"{_timeline_app_name(app['app_name'])} {m}m"
+        if app["title"]:
+            part += f"（{_timeline_title(app['title'])}）"
+        parts.append(part)
+
+    shown_ids = {id(app) for app, _ in shown}
+    rest_seconds = sum(
+        app["duration_seconds"] for app in slot["apps"] if id(app) not in shown_ids
+    )
+    rest_minutes = round(rest_seconds / 60)
+    if rest_minutes >= 1:
+        parts.append(f"他 {rest_minutes}m")
+
+    return f"{slot['start']} " + ", ".join(parts)
 
 
 def format_duration(seconds: float) -> str:
@@ -89,7 +137,8 @@ def format_digest(
     app_times: list[AppTimeEntry],
     calendar_events: list[CalendarEventInfo] | None = None,
     whatpulse_stats: WhatPulseStats | None = None,
-    target_date_str: str = ""
+    target_date_str: str = "",
+    timeline: list[TimelineSlot] | None = None,
 ) -> str:
     """
     収集データからMCPログ形式のMarkdownを生成する。
@@ -98,7 +147,8 @@ def format_digest(
         notion_pages: Notion収集結果
         github_repos: GitHub収集結果
         chrome_sites: Chrome収集結果
-        app_times: ActivityWatch収集結果
+        app_times: ActivityWatch収集結果（1日のアプリ別合計）
+        timeline: ActivityWatch収集結果（15分ごとの時間帯）。末尾に折りたたみで載せる
 
     Returns:
         MCPログ用のMarkdown文字列
@@ -184,6 +234,17 @@ def format_digest(
         uptime_m = (whatpulse_stats['uptime_seconds'] % 3600) // 60
         lines.append(f"| 稼働時間 | {uptime_h}h {uptime_m:02d}m |")
         lines.append("")
+
+    # === 15分ごとの時間帯（日次ログの突き合わせ用。人が見るときは閉じておく） ===
+    timeline_lines = [
+        line for line in (format_timeline_line(slot) for slot in timeline or []) if line
+    ]
+    if timeline_lines:
+        lines.append(f"{TOGGLE_HEADING_PREFIX}🕒 Timeline（15分・JST）")
+        for line in timeline_lines:
+            lines.append(f"- {line}")
+        lines.append("")
+
     # === フッター ===
     lines.append("---")
     lines.append(f"*自動生成: {now.strftime('%Y-%m-%d %H:%M:%S')} JST*")

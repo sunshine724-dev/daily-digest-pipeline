@@ -11,12 +11,15 @@ import requests
 from notion_client import Client, APIResponseError
 
 import config
+import formatter
 
 logger = logging.getLogger(__name__)
 
 # リトライ設定
 MAX_RETRIES = 3
 RETRY_DELAY = 2  # 秒
+
+_MAX_TOGGLE_CHILDREN = 100
 
 
 def _device_filter() -> dict[str, Any]:
@@ -103,6 +106,7 @@ def _markdown_to_notion_blocks(markdown: str) -> list[dict[str, Any]]:
     対応フォーマット:
         - ## → heading_2
         - ### → heading_3
+        - ### ▶ → 折りたたみの heading_3。直後の「- 」行を中に入れる（中身はリンク等を解釈しない）
         - テーブル（| ... |）→ table
         - - [リンク](URL) → bulleted_list_item with link
         - 数字. テキスト → numbered_list_item
@@ -133,6 +137,17 @@ def _markdown_to_notion_blocks(markdown: str) -> list[dict[str, Any]]:
             text = line[3:]
             blocks.append(_heading_block(2, text))
             i += 1
+            continue
+
+        # === 折りたたみ見出し3（直後の箇条書きを中に入れる） ===
+        if line.startswith(formatter.TOGGLE_HEADING_PREFIX):
+            text = line[len(formatter.TOGGLE_HEADING_PREFIX) :]
+            i += 1
+            items: list[str] = []
+            while i < len(lines) and lines[i].startswith("- "):
+                items.append(lines[i][2:])
+                i += 1
+            blocks.append(_toggle_heading_block(text, items))
             continue
 
         # === 見出し3 ===
@@ -254,6 +269,25 @@ def _heading_block(level: int, text: str) -> dict[str, Any]:
         "type": key,
         key: {"rich_text": _parse_rich_text(text)},
     }
+
+
+def _toggle_heading_block(text: str, items: list[str]) -> dict[str, Any]:
+    """
+    折りたたみの heading_3 を作り、items を箇条書きとして中に入れる。
+    items はページ名などをそのまま含むので、リンク記法を解釈せずプレーンテキストで入れる
+    （角括弧や丸括弧を含むページ名が不正なリンクになり、API が拒否するのを避けるため）。
+    Notion API は1回の追加で子ブロックを100個までしか受け付けないので、超えた分は切り捨てる。
+    """
+    block = _heading_block(3, text)
+    block["heading_3"]["is_toggleable"] = True
+    block["heading_3"]["children"] = [
+        {
+            "type": "bulleted_list_item",
+            "bulleted_list_item": {"rich_text": [_text_obj(item)]},
+        }
+        for item in items[:_MAX_TOGGLE_CHILDREN]
+    ]
+    return block
 
 
 def _paragraph_block(text: str, bold: bool = False) -> dict[str, Any]:

@@ -64,7 +64,7 @@ def collect_all(target_date_str: str) -> dict:
         "notion_pages": [],
         "github_repos": [],
         "chrome_sites": [],
-        "app_times": [],
+        "activity": {"app_times": [], "timeline": []},
         "calendar_events": [],
         "whatpulse_stats": None,
     }
@@ -75,7 +75,7 @@ def collect_all(target_date_str: str) -> dict:
         "github": ("github_repos", lambda: github_collector.collect(target_date_str)),
         "chrome": ("chrome_sites", lambda: chrome_collector.collect(target_date_str)),
         "activitywatch": (
-            "app_times",
+            "activity",
             lambda: activitywatch_collector.collect(target_date_str),
         ),
         "gcal": ("calendar_events", lambda: gcal_collector.collect(target_date_str)),
@@ -114,6 +114,9 @@ def collect_all(target_date_str: str) -> dict:
             except Exception as e:
                 logger.error(f"❌ {name} 収集失敗: {e}")
 
+    activity = results.pop("activity")
+    results["app_times"] = activity["app_times"]
+    results["timeline"] = activity["timeline"]
     return results
 
 
@@ -220,6 +223,7 @@ def main() -> None:
             calendar_events=data["calendar_events"],
             whatpulse_stats=data["whatpulse_stats"],
             target_date_str=target_date_str,
+            timeline=data["timeline"],
         )
 
         # 3. アップロード
